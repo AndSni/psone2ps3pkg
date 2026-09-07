@@ -13,14 +13,27 @@ PS2 discs and other systems are rejected.
 ### Standalone binary (no Python needed)
 
 Grab `psone2ps3pkg-linux-x86_64` from the [latest release](../../releases/latest),
-`chmod +x` it, and run it. It bundles Python, pop-fe and a prebuilt `pkgcrypt`,
-so nothing else is required (Linux x86-64, glibc ≥ 2.35).
+`chmod +x` it, and run it **from a terminal**. It bundles Python, pop-fe and a
+prebuilt `pkgcrypt`, so nothing else is required (Linux x86-64, glibc ≥ 2.35).
 
 ```sh
 ./psone2ps3pkg-linux-x86_64                          # TUI: drop a folder, press Enter
 ./psone2ps3pkg-linux-x86_64 "/path/to/game folder"   # build without the TUI
 ./psone2ps3pkg-linux-x86_64 --check                  # verify optional tools
 ```
+
+This is a terminal app, so **double-clicking the file in a file manager does
+nothing** — it has no terminal to draw in. Either run it from a shell as above,
+or install the menu launcher:
+
+```sh
+./install.sh            # -> ~/.local/bin/psone2ps3pkg  +  a "psone2ps3pkg"
+                        #    entry in your app menu that opens in a terminal
+./install.sh --uninstall
+```
+
+(`install.sh` ships in the release next to the binary; from a source checkout it
+lives at `scripts/install.sh` and picks up `dist/psone2ps3pkg`.)
 
 ### From source
 

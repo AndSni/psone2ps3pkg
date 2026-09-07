@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=psone2ps3pkg
+GenericName=PS1 to PS3 PKG converter
+Comment=Turn a PlayStation 1 disc image into a PS3-installable PS One Classic .pkg
+Exec=psone2ps3pkg
+TryExec=psone2ps3pkg
+Terminal=true
+Icon=media-optical
+Categories=Utility;
+Keywords=playstation;ps1;psx;ps3;pkg;pops;psone;classic;

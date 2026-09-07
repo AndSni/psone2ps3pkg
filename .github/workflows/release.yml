@@ -34,6 +34,7 @@ jobs:
         run: |
           mkdir -p out
           cp dist/psone2ps3pkg out/psone2ps3pkg-linux-x86_64
+          cp packaging/psone2ps3pkg.desktop scripts/install.sh out/
           ( cd out && sha256sum psone2ps3pkg-linux-x86_64 > psone2ps3pkg-linux-x86_64.sha256 )
 
       - uses: actions/upload-artifact@v4
