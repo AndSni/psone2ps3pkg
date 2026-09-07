@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "psone2ps3pkg"
+version = "0.1.0"
+description = "Drag-and-drop TUI that turns a PlayStation 1 disc image into a PS3-installable PS One Classic .pkg, written into the same folder."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "AndSni" }]
+keywords = ["playstation", "ps1", "psx", "ps3", "pkg", "pops", "ps one classic", "pop-fe"]
+classifiers = [
+    "Environment :: Console",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Games/Entertainment",
+    "Topic :: System :: Archiving :: Packaging",
+]
+dependencies = [
+    "textual>=0.80",
+    # Runtime deps of the vendored pop-fe engine (PS3 PKG path only):
+    "pillow>=10",
+    "requests>=2.28",
+    "pycdlib>=1.14",
+    "pycryptodome>=3.19",
+    "ecdsa>=0.18",
+]
+
+[project.urls]
+Homepage = "https://github.com/AndSni/psone2ps3pkg"
+Issues = "https://github.com/AndSni/psone2ps3pkg/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+psone2ps3pkg = "psone2ps3pkg.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/psone2ps3pkg"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

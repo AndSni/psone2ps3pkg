@@ -1,0 +1,926 @@
+#!/usr/bin/python3
+#!/usr/bin/env python
+
+import argparse
+import datetime
+import io
+import os
+import pathlib
+import pygubu
+import pygubu.widgets.simpletooltip as tooltip
+import re
+import requests
+import shutil
+import subprocess
+import tkinter as tk
+import tkinter.ttk as ttk
+from tkinterdnd2 import *
+import zipfile
+
+
+
+from PIL import Image, ImageDraw
+from bchunk import bchunk
+import importlib  
+from gamedb import games, libcrypt, themes
+try:
+    import popfe
+except:
+    popfe = importlib.import_module("pop-fe")
+from cue import parse_ccd, ccd2cue, write_cue
+
+verbose = False
+temp_files = []
+
+PROJECT_PATH = pathlib.Path(__file__).parent
+PROJECT_UI = PROJECT_PATH / "pop-fe-ps3.ui"
+
+
+class FinishedDialog(tk.Toplevel):
+    def __init__(self, root):
+        tk.Toplevel.__init__(self, root)
+        label = tk.Label(self, text="Finished creating PKG")
+        label.pack(fill="both", expand=True, padx=20, pady=20)
+
+        button = tk.Button(self, text="Continue", command=self.destroy)
+        button.pack(side="bottom")
+
+class PopFePs3App:
+    def __init__(self, master=None):
+        self.myrect = None
+        self.cue_file_orig = None
+        self.cue_files = None
+        self.real_cue_files = None
+        self.img_files = None
+        self.disc_ids = None
+        self.md5_sums = None
+        self.real_disc_ids = None
+        self.icon0 = None
+        self.icon0_tk = None
+        self.pic0 = None
+        self.pic0_orig = None
+        self.pic0_path = None
+        self.pic0_tk = None
+        self.pic1 = None
+        self.pic1_path = None
+        self.pic1_tk = None
+        self.back = None
+        self.disc = None
+        self.pic0_disabled = 'off'
+        self.pic1_bc = 'off'
+        self.pic1_disabled = 'off'
+        self.snd0_disabled = 'off'
+        self.icon0_disc = 'off'
+        self.preview_tk = None
+        self.pkgdir = None
+        self.data_track_only = 'off'
+        self.subdir = 'pop-fe-ps3-work/'
+        self.pic0scaling = 0.9
+        self.pic0xoffset = 0.1
+        self.pic0yoffset = 0.1
+        self.manual = None
+        self.path_dir = os.getcwd()
+
+        self.master = master
+        self.builder = builder = pygubu.Builder()
+        builder.add_resource_path(PROJECT_PATH)
+        builder.add_from_file(PROJECT_UI)
+        self.mainwindow = builder.get_object("top_frame", master)
+
+        callbacks = {
+            'on_icon0_clicked': self.on_icon0_clicked,
+            'on_icon0_dropped': self.on_icon0_dropped,
+            'on_icon0_from_disc': self.on_icon0_from_disc,
+            'on_pic0_clicked': self.on_pic0_clicked,
+            'on_pic0_dropped': self.on_pic0_dropped,
+            'on_pic0_disabled': self.on_pic0_disabled,
+            'on_pic1_clicked': self.on_pic1_clicked,
+            'on_pic1_dropped': self.on_pic1_dropped,
+            'on_pic1_disabled': self.on_pic1_disabled,
+            'on_pic1_from_bc': self.on_pic1_from_bc,
+            'on_snd0_disabled': self.on_snd0_disabled,
+            'on_path_changed': self.on_path_changed,
+            'on_dir_changed': self.on_dir_changed,
+            'on_youtube_audio': self.on_youtube_audio,
+            'on_create_pkg': self.on_create_pkg,
+            'on_reset': self.on_reset,
+            'on_theme_selected': self.on_theme_selected,
+            'on_data_track_only': self.on_data_track_only,
+            'on_force_ntsc': self.on_force_ntsc,
+            'on_force_newemu': self.on_force_newemu,
+            'on_allow_swapdisc': self.on_allow_swapdisc,
+            'on_psx_undither': self.on_psx_undither,
+            'on_pic0_scaling': self.on_pic0_scaling,
+            'on_pic0_xoffset': self.on_pic0_xoffset,
+            'on_pic0_yoffset': self.on_pic0_yoffset,
+            'on_manual_dir': self.on_manual_dir,
+        }
+
+        builder.connect_callbacks(callbacks)
+        c = self.builder.get_object('icon0_canvas', self.master)
+        c.drop_target_register(DND_FILES)
+        c.dnd_bind('<<Drop>>', self.on_icon0_dropped)
+        c = self.builder.get_object('pic0_canvas', self.master)
+        c.drop_target_register(DND_FILES)
+        c.dnd_bind('<<Drop>>', self.on_pic0_dropped)
+        c = self.builder.get_object('pic1_canvas', self.master)
+        c.drop_target_register(DND_FILES)
+        c.dnd_bind('<<Drop>>', self.on_pic1_dropped)
+
+        # Tooltips
+        self.use_psx_undither = builder.get_object("use_psx_undither")
+        tooltip.create(self.use_psx_undither, "Use PSX-Undither to patch the game.\nThis will remove dithering effects.")
+        self.allow_swapdisc = builder.get_object("allow_swapdisc")
+        tooltip.create(self.allow_swapdisc, "Allow swapping disks even if the game is not requesting it.\nThis is only needed on a handful of games that do not\nuse the normal way to handle multi-discs.")
+        self.force_newemu = builder.get_object("force_newemu")
+        tooltip.create(self.force_newemu , "Use the psx_newemu emulator instead of psx_netemu\nVery few games need this.\nDo not enable unless you must since the psx_newemu emulator\nhas worse compatibility than psx_newemu")
+        self.force_ntsc = builder.get_object("force_ntsc")
+        tooltip.create(self.force_ntsc , "Force the emulator to NTSC. This can cause the game to run\nat the wrong speed when used on a PAL console.")
+        self.disc_as_icon0 = builder.get_object("disc_as_icon0")
+        tooltip.create(self.disc_as_icon0 , "Use a scan of the disc as the icon")
+        self.pic1_as_background = builder.get_object("pic1_as_background")
+        tooltip.create(self.pic1_as_background , "Use the back of the game box as the background image")
+        dto = builder.get_object("data_track_only")
+        tooltip.create(dto , "Only encode the data track and skip all CDDA tracks\nwhen creating the EBOOT.\nThis makes the EBOOT smaller but you can no longer convert the EBOOT back into a BIN/CUE file.\nMusic will still work since it is always converted to ATRAC3.\n")
+        self.disable_snd0 = builder.get_object("disable_snd0")
+        tooltip.create(self.disable_snd0 , "Disable the SND0 audio that would play when the game icon is\nhighlighted on the XMB")
+        self.disable_pic1 = builder.get_object("disable_pic1")
+        tooltip.create(self.disable_pic1 , "Disable the background image that would show up on the XMB\nwhen the gameicon is highlighted")
+        self.disable_pic0 = builder.get_object("disable_pic0")
+        tooltip.create(self.disable_pic0 , "Disable the game logo that would show up on the XMB\nwhen the gameicon is highlighted")
+        _manual = builder.get_object("manual")
+        tooltip.create(_manual, "The manual for the game.\nThis can be a ZIP/CBR/PDF file with one image per page, a finished\nDOCUMENT.DAT in either PSP or PS3 format, or a directory containing\none image per page. Use the Directory... button to select a directory.")
+        self.pic0scaling = builder.get_object("pic0scaling")
+        tooltip.create(self.pic0scaling , "Change the scaling of the game logo.\n1.0 is 100% of original.\n0.5 is 50%, etc.")
+        self.pic0xoffset = builder.get_object("pic0xoffset")
+        tooltip.create(self.pic0xoffset , "Shift the placement of pic0 horizontally.\n0.1 means shift 10% to the right.\n-0.1 means shift 10% to the left.\nThe resulting image is bounded by the maximum size of the pic0 box.")
+        self.pic0yoffset = builder.get_object("pic0yoffset")
+        tooltip.create(self.pic0yoffset , "Shift the placement of pic0 vertically.\n0.1 means shift 10% down.\n-0.1 means shift 10% up.\nThe resulting image is bounded by the maximum size of the pic0 box.")
+        #self. = builder.get_object("")
+        #tooltip.create(self. , "")
+
+        self._theme = ''
+        o = ['']
+        for theme in themes:
+            o.append(theme)
+        self.builder.get_object('theme', self.master).configure(values=o)
+        self.init_data()
+        try:
+            self.read_prefs()
+        except:
+            True
+
+    def __del__(self):
+        global temp_files
+        print('Delete temporary files') if verbose else None
+        for f in temp_files:
+            print('Deleting temp/dir file', f) if verbose else None
+            try:
+                os.unlink(f)
+            except:
+                try:
+                    os.rmdir(f)
+                except:
+                    True
+        temp_files = []  
+
+    def update_prefs(self):
+        with open('pop-fe-ps3.config', "w") as f:
+            f.write('%s:%s\n' % ('newemu', self.builder.get_variable('force_newemu_variable').get()))
+            f.write('%s:%s\n' % ('swap', self.builder.get_variable('allow_discswap_variable').get()))
+            f.write('%s:%s\n' % ('ntsc', self.builder.get_variable('force_ntsc_variable').get()))
+            f.write('%s:%s\n' % ('undither', self.builder.get_variable('psx_undither_variable').get()))
+            f.write('%s:%s\n' % ('pkgdir', self.builder.get_variable('pkgdir_variable').get()))
+            if self.path_dir:
+                f.write('%s:%s\n' % ('path', self.path_dir))
+
+
+    def read_prefs(self):
+        with open('pop-fe-ps3.config', "r") as f:
+            for x in f.read().splitlines():
+                key, val =  x.split(':', 1)
+                if key == 'newemu':
+                    self.builder.get_variable('force_newemu_variable').set(val)
+                if key == 'swap':
+                    self.builder.get_variable('allow_discswap_variable').set(val)
+                if key == 'ntsc':
+                    self.builder.get_variable('force_ntsc_variable').set(val)
+                if key == 'undither':
+                    self.builder.get_variable('psx_undither_variable').set(val)
+                if key == 'pkgdir':
+                    self.builder.get_variable('pkgdir_variable').set(val)
+                if key == 'path':
+                    self.path_dir = val
+                    if self.path_dir:
+                        self.builder.get_object('disc1', self.master).config(initialdir=self.path_dir)
+                        self.builder.get_object('disc2', self.master).config(initialdir=self.path_dir)
+                        self.builder.get_object('disc3', self.master).config(initialdir=self.path_dir)
+                        self.builder.get_object('disc4', self.master).config(initialdir=self.path_dir)
+                        self.builder.get_object('disc5', self.master).config(initialdir=self.path_dir)
+
+                
+    def init_data(self):
+        global temp_files
+        if temp_files:
+            for f in temp_files:
+                try:
+                    os.unlink(f)
+                except:
+                    try:
+                        os.rmdir(f)
+                    except:
+                        True
+
+        temp_files = []  
+        temp_files.append(self.subdir)
+        shutil.rmtree(self.subdir, ignore_errors=True)
+        os.mkdir(self.subdir)
+
+        self.cue_files = []
+        self.real_cue_files = []
+        self.img_files = []
+        self.disc_ids = []
+        self.md5_sums = []
+        self.real_disc_ids = []
+        self.icon0 = None
+        self.icon0_tk = None
+        self.pic0 = None
+        self.pic0_orig = None
+        self.pic0_path = None
+        self.pic0_tk = None
+        self.pic1 = None
+        self.pic1_path = None
+        self.pic1_tk = None
+        self.back = None
+        self.disc = None
+        self.preview_tk = None
+        self.manual = None
+            
+        for idx in range(1,6):
+            self.builder.get_object('discid%d' % (idx), self.master).config(state='disabled')
+            self.builder.get_object('disc' + str(idx), self.master).config(filetypes=[('Image files', ['.cue', '.ccd', '.img', '.zip', '.chd']), ('All Files', ['*.*', '*'])])
+            self.builder.get_variable('disc%d_variable' % (idx)).set('')
+            self.builder.get_variable('discid%d_variable' % (idx)).set('')
+            self.builder.get_object('disc' + str(idx), self.master).config(state='disabled')
+        self.builder.get_object('disc1', self.master).config(state='normal')
+        self.builder.get_object('create_button', self.master).config(state='disabled')
+        self.builder.get_object('youtube_button', self.master).config(state='disabled')
+        self.builder.get_object('pic0scaling', self.master).config(state='disabled')
+        self.builder.get_object('pic0xoffset', self.master).config(state='disabled')
+        self.builder.get_object('pic0yoffset', self.master).config(state='disabled')
+        self.builder.get_variable('title_variable').set('')
+        self.builder.get_object('snd0', self.master).config(filetypes=[('Audio files', ['.wav', '.mp3', '.m4a', '.ogg', '.flac']), ('ATRAC3 files', ['.at3', '.AT3', '.snd0']), ('All Files', ['*.*', '*'])])
+        self.builder.get_variable('snd0_variable').set('')
+        self.builder.get_object('manual', self.master).config(state='disabled')
+        self.builder.get_object('manual', self.master).config(filetypes=[('Manuals', ['.zip', '.cbz', '.cbr', '.rar', '.pdf', '.dat', '.manual']), ('All Files', ['*.*', '*'])])
+        self.builder.get_object('manual_dir', self.master).config(state='disabled')
+        self.builder.get_variable('manual_variable').set('')
+        self.builder.get_variable('pic0scaling_variable').set('')
+        self.builder.get_variable('pic0xoffset_variable').set('')
+        self.builder.get_variable('pic0yoffset_variable').set('')
+
+    def update_preview(self):
+        def has_transparency(img):
+            if img.info.get("transparency", None) is not None:
+                return True
+            if img.mode == "P":
+                transparent = img.info.get("transparency", -1)
+                for _, index in img.getcolors():
+                    if index == transparent:
+                        return True
+            elif img.mode == "RGBA":
+                extrema = img.getextrema()
+                if extrema[3][0] < 255:
+                    return True
+
+                return False
+
+        if self.pic0_orig and self.pic0.mode == 'P':
+            self.pic0_orig = self.pic0.convert(mode='RGBA')
+
+        c = self.builder.get_object('preview_canvas', self.master)
+        if not self.pic1 or self.pic1_disabled == 'on':
+            p1 = Image.new("RGBA", (382,216), (255,255,255,0))
+        else:
+            if self.pic1_bc == 'off':
+                p1 = self.pic1.resize((382,216), Image.Resampling.HAMMING)
+            else:
+                p1 = self.back.resize((382,216), Image.Resampling.HAMMING)
+        p1 = p1.convert('RGBA')
+        
+        if self.pic0_disabled == 'on':
+            _pic0 = None
+        else:
+            _pic0 = popfe.rescale_pic0(self.pic0_orig, popfe.get_pic0_scaling(self.disc_ids[0]), popfe.get_pic0_offset(self.disc_ids[0]))
+        if _pic0:
+            p0 = _pic0.resize((int(p1.size[0] * 0.55) , int(p1.size[1] * 0.58)), Image.Resampling.HAMMING)
+            if has_transparency(p0):
+                Image.Image.paste(p1, p0, box=(148,79), mask=p0)
+            else:
+                Image.Image.paste(p1, p0, box=(148,79))
+        i0 = None
+        if self.icon0 and self.icon0_disc == 'off':
+                i0 = self.icon0.resize((int(p1.size[0] * 0.10) , int(p1.size[0] * 0.10)), Image.Resampling.HAMMING)
+        if self.disc and self.icon0_disc == 'on':
+                i0 = self.disc.resize((int(p1.size[0] * 0.10) , int(p1.size[0] * 0.10)), Image.Resampling.HAMMING)
+        if i0:
+            if has_transparency(i0):
+                Image.Image.paste(p1, i0, box=(100,79), mask=i0)
+            else:
+                Image.Image.paste(p1, i0, box=(100,79))
+        temp_files.append(self.subdir + 'PREVIEW.PNG')
+        p1.save(self.subdir + 'PREVIEW.PNG')
+        self.preview_tk = tk.PhotoImage(file = self.subdir + 'PREVIEW.PNG')
+        c = self.builder.get_object('preview_canvas', self.master)
+        c.create_image(0, 0, image=self.preview_tk, anchor='nw')
+
+    def on_manual_dir(self):
+        # The manual can also be just a directory containing one image
+        # per page. The path chooser can only select files so we need a
+        # separate button to select a directory.
+        path = tk.filedialog.askdirectory(title='Select directory containing the images for the manual')
+        if not path:
+            return
+        self.manual = path
+        self.builder.get_variable('manual_variable').set(path)
+
+    def on_theme_selected(self, event):
+        self.master.config(cursor='watch')
+        self._theme = self.builder.get_object('theme', self.master).get()
+        self.update_assets()
+        self.master.config(cursor='')
+
+    def fetch_pic0(self):
+        disc_id = self.disc_ids[0]
+        game = popfe.get_game_from_gamelist(disc_id)
+        
+        self.pic0 = None
+        if self.pic0_path:
+            self.pic0 = Image.open(self.pic0_path)
+            self.pic0_orig = Image.open(self.pic0_path)
+        if not self.pic0 and self._theme != '':
+            self.pic0_orig = popfe.get_image_from_theme(self._theme, disc_id, 'pop-fe-psp-work', 'PIC0.PNG')
+            if not self.pic0:
+                self.pic0_orig = popfe.get_image_from_theme(self._theme, disc_id, 'pop-fe-psp-work', 'PIC0.png')
+            self.pic0 = self.pic0_orig
+        if not self.pic0:
+            self.pic0_orig = popfe.get_pic0_from_game(disc_id, game, self.cue_file_orig, no_scaling=True)
+            self.pic0 = popfe.rescale_pic0(self.pic0_orig, popfe.get_pic0_scaling(disc_id), popfe.get_pic0_offset(disc_id))
+        if self.pic0:
+            temp_files.append(self.subdir + 'PIC0.PNG')
+            self.pic0.resize((128,80), Image.Resampling.HAMMING).save(self.subdir + 'PIC0.PNG')
+            self.pic0_tk = tk.PhotoImage(file = self.subdir + 'PIC0.PNG')
+            c = self.builder.get_object('pic0_canvas', self.master)
+            c.create_image(0, 0, image=self.pic0_tk, anchor='nw')
+        
+    def update_assets(self):
+        if not self.disc_ids:
+            return
+        if not self.cue_file_orig:
+            return
+        disc_id = self.disc_ids[0]
+        game = popfe.get_game_from_gamelist(disc_id)
+        if self.snd0_disabled == 'off':
+            snd0 = None
+            print('Fetching SND0') if verbose else None
+            if self._theme != '':
+                snd0 = popfe.get_snd0_from_theme(self._theme, disc_id, 'pop-fe-psp-work')
+                if snd0:
+                    temp_files.append(snd0)
+            if not snd0 and disc_id in games and 'snd0' in games[disc_id]:
+                snd0 = games[disc_id]['snd0']
+            if snd0:
+                self.builder.get_variable('snd0_variable').set(snd0)
+                
+        print('Fetching ICON0') if verbose else None
+        self.icon0 = None
+        if self._theme != '':
+            print('Get icon0 from theme')
+            self.icon0 = popfe.get_image_from_theme(self._theme, disc_id, 'pop-fe-psp-work', 'ICON0.PNG')
+            if not self.icon0:
+                self.icon0 = popfe.get_image_from_theme(self._theme, disc_id, 'pop-fe-psp-work', 'ICON0.png')
+            if self.icon0:
+                self.icon0 = self.icon0.crop(self.icon0.getbbox())
+        if not self.icon0:
+            self.icon0 = popfe.get_icon0_from_game(disc_id, game, self.cue_file_orig, self.subdir + 'ICON0.PNG', psn_frame_size=((176,176),(138,138)))
+            
+        if self.icon0:
+            temp_files.append(self.subdir + 'ICON0.PNG')
+            self.icon0.resize((80,80), Image.Resampling.HAMMING).save(self.subdir + 'ICON0.PNG')
+            self.icon0_tk = tk.PhotoImage(file = self.subdir + 'ICON0.PNG')
+            c = self.builder.get_object('icon0_canvas', self.master)
+            c.create_image(0, 0, image=self.icon0_tk, anchor='nw')
+            
+        print('Fetching PIC0') if verbose else None
+        self.fetch_pic0()
+        
+        print('Fetching PIC1') if verbose else None
+        self.pic1 = None
+        if self.pic1_path:
+            self.pic1 = Image.open(self.pic1_path)
+        if not self.pic1 and self._theme != '':
+            self.pic1 = popfe.get_image_from_theme(self._theme, disc_id, 'pop-fe-psp-work', 'PIC1.PNG')
+            if not self.pic1:
+                self.pic1 = popfe.get_image_from_theme(self._theme, disc_id, 'pop-fe-psp-work', 'PIC1.png')
+        if not self.pic1:
+            self.pic1 = popfe.get_pic1_from_game(disc_id, game, self.cue_file_orig)
+        if self.pic1:
+            temp_files.append(self.subdir + 'PIC1.PNG')
+            self.pic1.resize((128,80), Image.Resampling.HAMMING).save(self.subdir + 'PIC1.PNG')
+            self.pic1_tk = tk.PhotoImage(file = self.subdir + 'PIC1.PNG')
+            c = self.builder.get_object('pic1_canvas', self.master)
+            c.create_image(0, 0, image=self.pic1_tk, anchor='nw')
+
+        self.update_preview()
+        
+    def on_path_changed(self, event):
+        cue_file = event.widget.cget('path')
+        img_file = None
+        if not len(cue_file):
+            return
+
+        self.path_dir = os.path.dirname(cue_file)
+        self.update_prefs()
+
+        self.master.config(cursor='watch')
+        self.master.update()
+        self.cue_file_orig = cue_file
+        print('Processing', cue_file)  if verbose else None
+        disc = event.widget.cget('title')
+        print('Disc', disc)  if verbose else None
+        idx = int(disc[1])
+
+        cue_file , real_cue_file, img_file = popfe.process_disk_file(cue_file, idx, temp_files, subdir=self.subdir)
+        self.cue_file_orig = real_cue_file
+            
+        print('Scanning for Game ID') if verbose else None
+        tmp = self.subdir + 'TMP01.iso'
+        disc_id, md5_sum = popfe.get_disc_id(cue_file, self.cue_file_orig, tmp)
+
+        self.builder.get_variable('disci%s_variable' % (disc)).set(disc_id)
+
+        self.img_files.append(img_file)
+        self.disc_ids.append(disc_id)
+        self.md5_sums.append(md5_sum)
+        self.real_disc_ids.append(disc_id)
+        self.cue_files.append(cue_file)
+        self.real_cue_files.append(real_cue_file)
+
+        if disc_id in games and 'manual' in games[disc_id]:
+            print('Found a MANUAL for', disc_id)
+            self.manual = games[disc_id]['manual']
+        _manual = popfe.find_local_manual(self.cue_file_orig)
+        if _manual:
+            self.manual = _manual
+        if disc == 'd1':
+            self.builder.get_object('discid1', self.master).config(state='normal')
+            self.builder.get_variable('title_variable').set(popfe.get_title_from_game(disc_id))
+            self.update_assets()
+            
+            self.builder.get_object('disc1', self.master).config(state='disabled')
+            self.builder.get_object('disc2', self.master).config(state='normal')
+            self.builder.get_object('create_button', self.master).config(state='normal')
+            self.builder.get_object('youtube_button', self.master).config(state='normal')
+            self.builder.get_object('disable_pic0', self.master).config(state='normal')
+            self.builder.get_object('pic1_as_background', self.master).config(state='normal')
+            self.builder.get_object('disc_as_icon0', self.master).config(state='normal')
+            if disc_id in games and 'pic0-scaling' in games[disc_id]:
+               self.pic0scaling = games[disc_id]['pic0-scaling']
+            else:
+                self.pic0scaling = 0.9
+            self.builder.get_variable('pic0scaling_variable').set(self.pic0scaling)
+            self.builder.get_object('pic0scaling', self.master).config(state='enabled')
+
+            if disc_id in games and 'pic0-offset' in games[disc_id]:
+               self.pic0xoffset = games[disc_id]['pic0-offset'][0]
+               self.pic0yoffset = games[disc_id]['pic0-offset'][1]
+            else:
+                self.pic0xoffset = 0.1
+                self.pic0yoffset = 0.1
+            self.builder.get_variable('pic0xoffset_variable').set(self.pic0xoffset)
+            self.builder.get_object('pic0xoffset', self.master).config(state='enabled')
+            self.builder.get_variable('pic0yoffset_variable').set(self.pic0yoffset)
+            self.builder.get_object('pic0yoffset', self.master).config(state='enabled')
+            self.builder.get_variable('manual_variable').set(self.manual)
+            self.builder.get_object('manual', self.master).config(state='enabled')
+            self.builder.get_object('manual_dir', self.master).config(state='enabled')
+            self.update_assets()
+            
+        elif disc == 'd2':
+            self.builder.get_object('discid2', self.master).config(state='normal')
+            self.builder.get_object('disc2', self.master).config(state='disabled')
+            self.builder.get_object('disc3', self.master).config(state='normal')
+        elif disc == 'd3':
+            self.builder.get_object('discid3', self.master).config(state='normal')
+            self.builder.get_object('disc3', self.master).config(state='disabled')
+            self.builder.get_object('disc4', self.master).config(state='normal')
+        elif disc == 'd4':
+            self.builder.get_object('discid4', self.master).config(state='normal')
+            self.builder.get_object('disc4', self.master).config(state='disabled')
+            self.builder.get_object('disc5', self.master).config(state='normal')
+        elif disc == 'd5':
+            self.builder.get_object('discid5', self.master).config(state='normal')
+            self.builder.get_object('disc5', self.master).config(state='disabled')
+        print('Finished processing disc') if verbose else None
+        self.master.config(cursor='')
+
+
+    def on_icon0_dropped(self, event):
+        self.master.config(cursor='watch')
+        self.master.update()
+        # try to open it as a file
+        self.icon0_tk = None
+        try:
+            os.stat(event.data)
+            self.icon0 = Image.open(event.data)
+        except:
+            self.icon0 = None
+        # if that failed, check if it was a link
+        if not self.icon0:
+            try:
+                _s = event.data
+                _p = _s.find('src="')
+                if _p < 0:
+                    raise Exception('Not a HTTP link')
+                _s = _s[_p + 5:]
+                _p = _s.find('"')
+                if _p < 0:
+                    raise Exception('Not a HTTP link')
+                _s = _s[:_p]
+                ret = requests.get(_s, stream=True)
+                if ret.status_code != 200:
+                    raise Exception('Failed to fetch file ', _s)
+                self.icon0 = Image.open(io.BytesIO(ret.content))
+            except:
+                True
+
+        self.master.config(cursor='')
+        if not self.icon0:
+            return
+        temp_files.append(self.subdir + 'ICON0.PNG')
+        self.icon0.resize((80,80), Image.Resampling.HAMMING).save(self.subdir + 'ICON0.PNG')
+        self.icon0_tk = tk.PhotoImage(file = self.subdir + 'ICON0.PNG')
+        c = self.builder.get_object('icon0_canvas', self.master)
+        c.create_image(0, 0, image=self.icon0_tk, anchor='nw')
+        self.update_preview()
+        
+    def on_icon0_clicked(self, event):
+        filetypes = [
+            ('Image files', ['.png', '.PNG', '.jpg', '.JPG']),
+            ('All Files', ['*.*', '*'])]
+        path = tk.filedialog.askopenfilename(title='Select image for COVER',filetypes=filetypes)
+        try:
+            os.stat(path)
+            self.icon0 = Image.open(path)
+        except:
+            return
+        temp_files.append(self.subdir + 'ICON0.PNG')
+        self.icon0.resize((80,80), Image.Resampling.HAMMING).save(self.subdir + 'ICON0.PNG')
+        self.icon0_tk = tk.PhotoImage(file = self.subdir + 'ICON0.PNG')
+        c = self.builder.get_object('icon0_canvas', self.master)
+        c.create_image(0, 0, image=self.icon0_tk, anchor='nw')
+        self.update_preview()
+
+    def on_pic0_dropped(self, event):
+        self.master.config(cursor='watch')
+        self.master.update()
+        # try to open it as a file
+        self.pic0_tk = None
+        try:
+            os.stat(event.data)
+            self.pic0 = Image.open(event.data)
+        except:
+            self.pic0 = None
+        # if that failed, check if it was a link
+        if not self.pic0:
+            try:
+                _s = event.data
+                _p = _s.find('src="')
+                if _p < 0:
+                    raise Exception('Not a HTTP link')
+                _s = _s[_p + 5:]
+                _p = _s.find('"')
+                if _p < 0:
+                    raise Exception('Not a HTTP link')
+                _s = _s[:_p]
+                ret = requests.get(_s, stream=True)
+                if ret.status_code != 200:
+                    raise Exception('Failed to fetch file ', _s)
+                self.pic0 = Image.open(io.BytesIO(ret.content))
+            except:
+                True
+
+        self.master.config(cursor='')
+        if not self.pic0:
+            return
+        temp_files.append(self.subdir + 'PIC0.PNG')
+        self.pic0.resize((128,80), Image.Resampling.HAMMING).save(self.subdir + 'PIC0.PNG')
+        self.pic0_tk = tk.PhotoImage(file = self.subdir + 'PIC0.PNG')
+        c = self.builder.get_object('pic0_canvas', self.master)
+        c.create_image(0, 0, image=self.pic0_tk, anchor='nw')
+        self.update_preview()
+        
+    def on_pic0_clicked(self, event):
+        filetypes = [
+            ('Image files', ['.png', '.PNG', '.jpg', '.JPG']),
+            ('All Files', ['*.*', '*'])]
+        path = tk.filedialog.askopenfilename(title='Select image for PIC0',filetypes=filetypes)
+        try:
+            os.stat(path)
+            self.pic0 = Image.open(path)
+            self.pic0_orig = Image.open(path)
+            self.pic0_path = path
+        except:
+            return
+        temp_files.append(self.subdir + 'PIC0.PNG')
+        self.pic0.resize((128,80), Image.Resampling.HAMMING).save(self.subdir + 'PIC0.PNG')
+        self.pic0_tk = tk.PhotoImage(file = self.subdir + 'PIC0.PNG')
+        c = self.builder.get_object('pic0_canvas', self.master)
+        c.create_image(0, 0, image=self.pic0_tk, anchor='nw')
+        self.update_preview()
+
+    def on_pic1_dropped(self, event):
+        self.master.config(cursor='watch')
+        self.master.update()
+        # try to open it as a file
+        self.pic1_tk = None
+        try:
+            os.stat(event.data)
+            self.pic1 = Image.open(event.data)
+        except:
+            self.pic1 = None
+        # if that failed, check if it was a link
+        if not self.pic1:
+            try:
+                _s = event.data
+                _p = _s.find('src="')
+                if _p < 0:
+                    raise Exception('Not a HTTP link')
+                _s = _s[_p + 5:]
+                _p = _s.find('"')
+                if _p < 0:
+                    raise Exception('Not a HTTP link')
+                _s = _s[:_p]
+                ret = requests.get(_s, stream=True)
+                if ret.status_code != 200:
+                    raise Exception('Failed to fetch file ', _s)
+                self.pic1 = Image.open(io.BytesIO(ret.content))
+            except:
+                True
+
+        self.master.config(cursor='')
+        if not self.pic1:
+            return
+        temp_files.append(self.subdir + 'PIC1.PNG')
+        self.pic1.resize((128,80), Image.Resampling.HAMMING).save(self.subdir + 'PIC1.PNG')
+        self.pic1_tk = tk.PhotoImage(file = self.subdir + 'PIC1.PNG')
+        c = self.builder.get_object('pic1_canvas', self.master)
+        c.create_image(0, 0, image=self.pic1_tk, anchor='nw')
+        self.update_preview()
+        
+    def on_pic1_clicked(self, event):
+        filetypes = [
+            ('Image files', ['.png', '.PNG', '.jpg', '.JPG']),
+            ('All Files', ['*.*', '*'])]
+        path = tk.filedialog.askopenfilename(title='Select image for PIC1',filetypes=filetypes)
+        try:
+            os.stat(path)
+            self.pic1 = Image.open(path)
+        except:
+            return
+        temp_files.append(self.subdir + 'PIC1.PNG')
+        self.pic1.resize((128,80), Image.Resampling.HAMMING).save(self.subdir + 'PIC1.PNG')
+        self.pic1_tk = tk.PhotoImage(file = self.subdir + 'PIC1.PNG')
+        c = self.builder.get_object('pic1_canvas', self.master)
+        c.create_image(0, 0, image=self.pic1_tk, anchor='nw')
+        self.update_preview()
+
+    def on_force_ntsc(self):
+        self.update_prefs()
+        
+    def on_force_newemu(self):
+        self.update_prefs()
+        
+    def on_allow_swapdisc(self):
+        self.update_prefs()
+        
+    def on_psx_undither(self):
+        self.update_prefs()
+        
+    def on_data_track_only(self):
+        self.data_track_only = self.builder.get_variable('data_track_only_variable').get()
+        self.update_preview()
+
+    def on_pic0_disabled(self):
+        self.pic0_disabled = self.builder.get_variable('pic0_disabled_variable').get()
+        self.update_preview()
+
+    def on_pic1_disabled(self):
+        self.pic1_disabled = self.builder.get_variable('pic1_disabled_variable').get()
+        self.update_preview()
+
+    def on_snd0_disabled(self):
+        self.snd0_disabled = self.builder.get_variable('snd0_disabled_variable').get()
+
+    def on_icon0_from_disc(self):
+        self.icon0_disc = self.builder.get_variable('disc_as_icon0_variable').get()
+        if not self.disc and self.disc_ids:
+            disc_id = self.disc_ids[0]
+            game = popfe.get_game_from_gamelist(disc_id)
+            self.master.config(cursor='watch')
+            self.master.update()
+            d = popfe.get_icon0_from_disc(disc_id, game, self.cue_files[0], 'DISC.PNG')
+            size = (176,176)
+            d = d.resize(size, Image.Resampling.HAMMING)
+            bigsize = (d.size[0] * 3, d.size[1] * 3)
+            mask = Image.new('L', bigsize, 0)
+            draw = ImageDraw.Draw(mask) 
+            draw.ellipse((0, 0) + bigsize, fill=255)
+            mask = mask.resize(d.size, Image.ANTIALIAS)
+            d.putalpha(mask)
+            self.disc = d
+            self.master.config(cursor='')
+
+        self.builder.get_object('icon0_or_disc', self.master).config(text='COVER' if self.icon0_disc == 'off' else 'DISC')
+        if self.icon0_disc == 'off':
+            self.icon0.resize((80,80), Image.Resampling.HAMMING).save(self.subdir + 'ICON0.PNG')
+        else:
+            self.disc.resize((80,80), Image.Resampling.HAMMING).save(self.subdir + 'ICON0.PNG')
+        self.icon0_tk = tk.PhotoImage(file = self.subdir + 'ICON0.PNG')
+        c = self.builder.get_object('icon0_canvas', self.master)
+        c.create_image(0, 0, image=self.icon0_tk, anchor='nw')
+        
+        self.update_preview()
+            
+    def on_pic1_from_bc(self):
+        self.pic1_bc = self.builder.get_variable('bc_for_pic1_variable').get()
+        if not self.back and self.disc_ids:
+            disc_id = self.disc_ids[0]
+            game = popfe.get_game_from_gamelist(disc_id)
+            self.master.config(cursor='watch')
+            self.master.update()
+            self.back = popfe.get_pic1_from_bc(disc_id, game, self.cue_files[0])
+            self.master.config(cursor='')
+        self.builder.get_object('pic1_or_back', self.master).config(text='PIC1' if self.pic1_bc == 'off' else 'BACK')
+        if self.pic1_bc == 'off':
+            self.pic1.resize((128,80), Image.Resampling.HAMMING).save(self.subdir + 'PIC1.PNG')
+        else:
+            self.back.resize((128,80), Image.Resampling.HAMMING).save(self.subdir + 'PIC1.PNG')
+        self.pic1_tk = tk.PhotoImage(file = self.subdir + 'PIC1.PNG')
+        c = self.builder.get_object('pic1_canvas', self.master)
+        c.create_image(0, 0, image=self.pic1_tk, anchor='nw')
+        
+        self.update_preview()
+
+    def on_pic0_scaling(self, event):
+        try:
+            v = float(self.builder.get_variable('pic0scaling_variable').get())
+        except:
+            return
+
+        if v > 0.1 and v != self.pic0scaling and self.disc_ids:
+            self.pic0scaling = v
+            games[self.disc_ids[0]]['pic0-scaling'] = self.pic0scaling
+            self.update_preview()
+
+    def on_pic0_xoffset(self, event):
+        try:
+            v = float(self.builder.get_variable('pic0xoffset_variable').get())
+        except:
+            return
+
+        if v >= 0.0 and v != self.pic0xoffset and self.disc_ids:
+            self.pic0xoffset = v
+            games[self.disc_ids[0]]['pic0-offset'] = (self.pic0xoffset, self.pic0yoffset)
+            self.update_preview()
+            
+    def on_pic0_yoffset(self, event):
+        try:
+            v = float(self.builder.get_variable('pic0yoffset_variable').get())
+        except:
+            return
+
+        if v >= 0.0 and v != self.pic0yoffset and self.disc_ids:
+            self.pic0yoffset = v
+            games[self.disc_ids[0]]['pic0-offset'] = (self.pic0xoffset, self.pic0yoffset)
+            self.update_preview()
+            
+    def on_dir_changed(self, event):
+        self.pkgdir = event.widget.cget('path')
+        # PKG in print()
+
+    def on_youtube_audio(self):
+        if not popfe.have_youtube():
+            print('yt-dlp is not installed.\nYou should install it by running:\npip3 install yt-dlp')
+            return
+        self.master.config(cursor='watch')
+        self.master.update()
+        url = popfe.search_youtube_audio(self.builder.get_variable('title_variable').get() + ' ps1 ost')
+        if url:
+            self.builder.get_variable('snd0_variable').set(url)
+
+        self.master.config(cursor='')
+
+    def on_create_pkg(self):        
+        pkg = self.builder.get_variable('pkgfile_variable').get()
+        pkgdir = self.builder.get_variable('pkgdir_variable').get()
+        if len(pkg) == 0:
+            pkg = 'game.pkg'
+        if len(pkgdir):
+            pkg = pkgdir + '/' + pkg
+        print('Creating ' + pkg)
+        disc_ids = []
+        for idx in range(len(self.cue_files)):
+            d = self.builder.get_variable('discid%d_variable' % (idx + 1)).get()
+            disc_ids.append(d)
+
+        disc_id = disc_ids[0]
+        title = self.builder.get_variable('title_variable').get()
+        print('DISC', disc_id)
+        print('TITLE', title)
+        resolution = 1
+        magic_word = []
+        subchannels = []
+        for idx in range(len(self.cue_files)):
+            if self.real_disc_ids[idx] in libcrypt:
+                magic_word.append(libcrypt[self.real_disc_ids[idx]]['magic_word'])
+                subchannels.append(popfe.generate_subchannels(libcrypt[self.real_disc_ids[idx]]['magic_word']))
+            else:
+                magic_word.append(0)
+                subchannels.append(None)
+                
+        if disc_id[:3] == 'SLE' or disc_id[:3] == 'SCE':
+            print('SLES/SCES PAL game. Default resolution set to 2 (640x512)') if verbose else None
+            resolution = 2
+        if self.builder.get_variable('force_ntsc_variable').get() == 'on':
+            resolution = 1
+
+        self.master.config(cursor='watch')
+        self.master.update()
+
+        snd0 = None
+        if self.snd0_disabled == 'off':
+            snd0 = self.builder.get_variable('snd0_variable').get()
+            if snd0[:24] == 'https://www.youtube.com/':
+                snd0 = popfe.get_snd0_from_link(snd0, subdir=self.subdir)
+                if snd0:
+                    temp_files.append(snd0)
+
+        p1 = self.pic1 if self.pic1_bc=='off' else self.back
+        if self.pic1_disabled == 'on':
+            p1 = None
+
+        manual = self.builder.get_variable('manual_variable').get()
+        if manual and len(manual) and manual != 'None':
+            manual = popfe.create_manual(manual, self.disc_ids[0], subdir=self.subdir, ps3_manual=True)
+        else:
+            manual = None
+
+        #
+        # Apply all PPF fixes we might need
+        #
+        self.cue_files, self.img_files = popfe.apply_ppf_fixes(self.real_disc_ids, self.cue_files, self.img_files, self.md5_sums, self.subdir)
+
+        aea_files, extra_data_tracks = popfe.generate_aea_files(self.cue_files, self.img_files, self.subdir)
+        if extra_data_tracks:
+            self.data_track_only = 'on'
+        
+        undither = self.builder.get_variable('psx_undither_variable').get() == 'on'
+        newemu   = self.builder.get_variable('force_newemu_variable').get() == 'on'
+        swap     = self.builder.get_variable('allow_discswap_variable').get() == 'on'
+        ntsc     = self.builder.get_variable('force_ntsc_variable').get() == 'on'
+
+        popfe.create_ps3(pkg, disc_ids, self.real_disc_ids, title,
+                         self.icon0 if self.icon0_disc=='off' else self.disc,
+                         self.pic0 if self.pic0_disabled =='off' else None,
+                         p1,
+                         self.cue_files, self.real_cue_files,
+                         self.img_files, [], aea_files, magic_word,
+                         resolution, subdir=self.subdir, snd0=snd0,
+                         subchannels=subchannels, manual=manual,
+                         whole_disk=True if self.data_track_only=='off' else False,
+                         psx_undither=undither,
+                         ps1_newemu=newemu, enable_swap=swap, force_ntsc=ntsc)
+        self.master.config(cursor='')
+
+        d = FinishedDialog(self.master)
+        self.master.wait_window(d)
+        self.init_data()
+
+    def on_reset(self):
+        self.init_data()
+
+        
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-v', action='store_true', help='Verbose')
+    args = parser.parse_args()
+
+    if args.v:
+        verbose = True
+
+    root = TkinterDnD.Tk()
+    app = PopFePs3App(root)
+    root.title('pop-fe PS3')
+    root.mainloop()
+    

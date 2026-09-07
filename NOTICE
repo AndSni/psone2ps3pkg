@@ -1,0 +1,32 @@
+psone2ps3pkg
+============
+
+The psone2ps3pkg wrapper (everything under src/ and tests/, the build scripts
+and CI config) is licensed under the MIT License — see LICENSE.
+
+Bundled third-party components under vendor/ keep their own licenses and
+copyrights; the MIT License above does not apply to them:
+
+- vendor/pop-fe
+    pop-fe by Ronnie Sahlberg — https://github.com/sahlberg/pop-fe
+    GNU Lesser General Public License v2.1
+    See vendor/pop-fe/LICENCE-LGPL-2.1.txt
+
+- vendor/pop-fe/PSL1GHT/tools/ps3py
+    From PSL1GHT — https://github.com/sahlberg/PSL1GHT
+    (pkg.py / fself.py / Struct.py / crypt.c and support files)
+
+- vendor/pop-fe/Cue2cu2
+    Cue2cu2 by NRGDEAD — https://github.com/NRGDEAD/Cue2cu2
+    GNU General Public License v3.0
+
+- vendor/pop-fe/binmerge
+    binmerge by Chris Putnam — https://github.com/putnam/binmerge
+    MIT License — see vendor/pop-fe/binmerge/LICENSE
+
+Exact upstream revisions are recorded in vendor/VENDOR.md.
+
+This project is an unofficial tool. It is not affiliated with or endorsed by
+Sony Interactive Entertainment. "PlayStation", "PS One" and "PS3" are
+trademarks of Sony Interactive Entertainment Inc. Use it only with disc images
+you are legally entitled to.

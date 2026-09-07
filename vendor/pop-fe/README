@@ -1,0 +1,828 @@
+POPstation-FEtcher
+==================
+==================
+
+POP-FE a tool to automate the process converting PSX disk images and install
+them on various platforms, including:
+* PSP/VITA
+* PSIO
+* PS2
+* PS3
+* Retroarch
+* PS Classic
+
+This is all LGPLv2.1
+
+TL;DR
+For Linux and windows.
+Connect PSP to your Linux/Windows box via USB, then run:
+
+  $ ./pop-fe.py --psp-dir=auto /psx/Grandia1of2.cue /psx/Grandia2of2.cue
+
+Or create a PS3 PKG:
+
+  $ ./pop-fe.py --ps3-pkg=Grandia.pkg /psx/Grandia1of2.ccd /psx/Grandia2of2.ccd
+
+or ...
+
+
+Enjoy.
+
+
+
+HOW TO RUN POP-FE:
+==================
+Pop-fe needs to create a bunch of temporary files while it is processing the
+data. So run it in a shell from the same directory that pop-fe and its
+dependencies are installed.
+You do not need to copy the game images to this directory.
+Pop-fe can read and process the images from remote directories.
+
+
+POP-FE:
+=======
+A utility to automate building and installing PSX games onto different
+systems.
+The current directory where you run this utility from needs to be writable
+so that we can use it to store temporary files during the conversing process.
+It supports and can convert games stored in the following types of file
+formats:
+
+.cue   : CUE file. The preferred option. The actual image file is extracted
+         from the content of the cue file. If the file-name found inside the
+         cue is a relative path it is assumed that the bin/img file is stored
+         in the same directory as the cue file.
+.ccd   : CCD file. Will be converted to a temporary CUE file before it is used.
+.bin   : BIN/IMG files. In this case a temporary .cue file will be created
+.img     in the local directory and used for the conversion. This cue file
+         will assume that the bin/img file is just one single track of type
+         MODE2/2352
+.zip   : ZIP file. The ZIP file will be extracted into the local directory
+         and if a .cue file is found it will be used.
+.chd   : CHD file. This requires that the chdman program is installed.
+.*     : Various memory card image formats.
+         Memory cards are detected by file size so the extensions does not
+	 matter.
+
+The utility supports building and installing the games on various different
+target platforms.
+Command line arguments are:
+-v                     : Verbose. Print additional information about what
+		         operations are performed during the game installation.
+--title                : Force the title to use for this game.
+		         By default pop-fe will automatically discover the
+			 game title from the image file provided. This argument
+			 can be used to override the title if the autodetection
+			 is wrong or fails.
+--game_id              : Force the game id. By default pop-fe will extract
+		         the SYSTEM.CNF file off the game iso and use it to
+			 detect the game-id. This argument can be used to
+			 override the id.
+			 For multidisc games this supports a comma-separated
+			 list of ids.
+			 This argument does not affect libcrypt. Libcrypt
+			 handling will always use the id from the cue/bin.
+--cover                : Image to use as the game icon. If not specified pop-fe
+		         will automatically fetch one from the internet.
+--logo                 : Image to use as the Boot logo on PSP.
+			 'pic1' means the image for PIC1 will be used.
+		         If not specified the default P.O.P.S one will be used.
+--pic0                 : Image to use as the PIC0/Screenshot. If not specified
+		         pop-fe will automatically fetch one from the internet.
+--pic1                 : Image to use as the PIC1/Screenshot. If not specified
+		         pop-fe will automatically fetch one from the internet.
+--manual               : The manual for the game. This can be a directory
+                         containing one image per page, a ZIP/CBR/PDF file,
+                         an already finished DOCUMENT.DAT or a http link to
+                         any of these.
+			 See Manual section below.
+--no-libcrypt          : Do not patch out libcrypt.
+			 The default is that libcrypt will be automatically patched
+			 our using:
+			 https://github.com/alex-free/libcrypt-patcher
+			 This argument will skip libcrypt-patcher.
+--psx-undither         : This removed dithering for some games by using:
+			 https://github.com/alex-free/psx-undither
+			 to patch the bin file.
+--resolution	       : By default resolution is set to '2' (640x512)
+		         for PAL games. I.e. games with a GameId that starts
+			 with SCES or SLES.
+			 And it is set to '1' (640x480) for all other games,
+			 which are assumed to all be NTSC.
+			 This argument can be used to force the resolution
+			 to a specific value.
+		         See https://www.psdevwiki.com/ps3/PARAM.SFO#RESOLUTION
+			 for a list of possible values.
+			 When forcing the resolution to NTSC for PS3 this
+			 will additionally inject the ps1_netemu config option
+			 to set the speed of the game correctly.
+--whole-disk           : For PS3 Packages pop-fe will default to only encode
+		         the data track in the pkg disc image and not the raw
+			 CD-DA tracks. The CD-DA tracks are converted to
+			 ATRAC3 format which is much much smaller which are
+			 then injected into the package.
+			 This makes packaged for games with CD-DA music much
+			 smaller in size. Use this argument if you still want
+			 the raw audio tracks to also be stored in the disc
+			 image. (This is only useful if at a later time you
+			 want to convert the EBOOT.PBP file back into a .BIN
+			 file)
+--watermark            : Add a watermark consisting of disk-id and game-title
+		         to PIC0 for PSP and PSC games.
+--list-themes          : This lists all the available themes
+--theme <theme>        : Use ICON0/PIC0/PIC1/SND0 from the theme if available
+--psio-dir <path>      : This specifies the path to where a PSIO sd card has
+                         been mounted. The games will be be installed as
+                         <path>/<game-title>/<game-title>.bin
+                         If you list more than one file it is assumed these
+                         are all the disks part of a multidisc game and
+                         MULTIDISC.LST will be created accordingly.
+                         PSIO uses CU2 files so must have cue2cu2.py installed
+			 in the same directory as pop-fe.py.
+--psp-dir <path>       : This specifies the path to where a PSP sd card has
+                         been mounted. The games will be converted into
+                         an EBOOT.PBP and will be installed as
+                         <path>/PSP/GAME/<game-id>/EBOOT.PBP
+                         The EBOOT.PBP will have a cover icon as well as a
+                         background image embedded.
+			 If you specify multiple images then a single multi-disk
+			 EBOOT.PBP will be created.
+			 If you specify path as 'auto' then pop-fe will
+			 scan all mounted media and pick the first one that
+			 contains a PSP or VITA memory card.
+--psp-install-memory-card : Used to install memory card images on the PSP.
+			 See memory card section below for usage.
+--psp-use-cdda        : With this setting the PSP EBOOT will be created
+		        containing the full CDDA tracks but no ATRAC3
+			tracks will be injected.
+			This is helpful for games on PSP that depend on
+			the "cdrom" to automatically play the next track
+			when the current track ends, which PSP does not do
+			automatically for ATRAC3 audio files.
+--ps2-dir             : This is the directory that holds the USB stick to
+		        install VCD files for running under POPS on a PS2.
+--ps3-pkg             : This creates a PS3 PKG
+			This requires CU2 files so make sure this script is
+			installed.
+--psc-dir             : This is the directory that holds the USB stick
+		        with AutoBleem to install to. The game will be installed
+			as Games/<title>.PBP. The PSC emulator can only handle
+			single disc PBPs :-(
+			Specify --psc-dir=auto and it will scan all connected
+			devices to try to find the one with AutoBleem.
+--ps1-newemu          : This only applies for PS3 PKGs. This switches the
+                        emulator to use to ps1_newemu instead of the default
+			ps1_netemu.
+--swap-discs          : This only applies for PS3 PKGs. This adds a ps3 netemu
+                        command that enables switching and resetting to disks in
+			ps1_netemu.
+--romhacks            : Comma separated list of romhacks to apply.
+		        Only supported types are .ppf and .xdelta files.
+			There must be one romhack for each disk image in the
+			conversion.
+			This requires that you have xdelta3 installed.
+--snd0                : Provide an audio file to be played when this game
+		        is focused on the XMB. See the SND0.AT3 section below.
+			To disable snd0 use --snd0=no
+--retroarch-bin-dir  : The directory where retroarch game bins are to be
+                        installed, inside a subfolder. Includes an m3u file 
+                        for correctly loading multi-dics games.
+--retroarch-cue-dir  : The directory where retroarch game cues (as .CD files)
+                        are to be installed with their respective bins, inside 
+                        a subfolder. Includes an m3u file for correctly loading
+                        multi-dics games.
+--retroarch-pbp-dir  : The directory where retroarch game pbp images are to be
+                        installed.
+--retroarch-thumbnail-dir : Where the coverimage for retroarch should go.
+
+#
+Examples:
+Assume I have connected my PSP with USB and it is shows up as :
+   /run/media/sahlberg/disk
+   
+$ ./pop-fe.py --psp-dir=/run/media/sahlberg/disk /psx/Metal\ Gear\ Solid\ VR\ Missions.cue
+
+Or you can just let pop-fe try to discover it automagically for you. This
+works for both Linux and Windows:
+
+$ ./pop-fe.py --psp-dir=auto /psx/Metal\ Gear\ Solid\ VR\ Missions.cue
+
+If you specify more than one cue file then it is assumed that this is
+a multidisc game and we will use the first cue file to determine the
+game id and title to be used for the whole set.
+
+Example:
+ # ./pop-fe.py --psp-dir=auto /psx/Grandia1of2.img /psx/Grandia2of2.img
+
+During the conversion process the img/bin file will be temporarily converted
+into an ISO file as NORMAL01.iso in the current directory.
+This is in order to open the iso9660 image and read the system.cnf file
+to extract the game id.
+You can avoid/skip this step by forcing the game-id from the command line,
+using (example only):
+    --game-id=SLUS00957
+    
+Game art and images are fetched from https://psxdatacenter.com/
+If a file named the same as the CUE but with the extension *_cover.png is found in the game
+directory it assumed to be the cover image and thus we skip pulling it from psxdatacenter.
+Example: cuefile:  foo.cue and corresponding cover in foo_cover.png
+
+Similarly, files named as <cue>_pic0.png and <cue>_pic1.png are used for the screenshot
+images.
+
+
+ROMHACKS
+========
+Romhacks can be provided and automatically applied.
+These must either be in PPF format and have a 'ppf' extension or in
+Xdelta[3] format and have a 'xdelta' extension.
+This is a comma-separated list of hacks to apply, one hack for each disk
+in the conversion.
+If you don't want to specify a hack for a disk in the set, then specify 'none'.
+You must have xdelta3 installed in order to apply such romhacks.
+
+Example:
+To apply a romhack on a single disc:
+$ ./pop-fe.py --psp-dir=auto --romhacks SMT.xdelta Shin\ Megami\ Tensei.cue
+
+To apply a romhack to only the second disc of a two disc game:
+$ ./pop-fe.py --psp-dir=auto --romhacks none,X.ppf D1.cue D2.cue
+
+
+PS3 External config files
+=========================
+External configs is a way to add commands to the ps1_netemu emulator to
+tweak gameplay and fix bugs for individual titles.
+
+See: https://www.psdevwiki.com/ps3/Talk:PS1_Emulation#External_Configs
+
+pop-fe/pop-fe-ps3 comes with a bunch of configs built in for various games.
+(See the ps3configs subdirectory.)
+
+You can also specify additional config files that pop-fe/pop-fe-ps3 will
+automatically eject when you create a PS3 package.
+This is done by storing the config file in the same directory as the cue file
+and with the filename <cue-file>.ps3config
+
+PSP External config files
+=========================
+External configs is a way to add commands to the pops emulator to
+tweak gameplay and fix bugs for individual titles.
+
+See: ...
+
+pop-fe/pop-fe-psp comes with a bunch of configs built in for various games.
+(See the pspconfigs subdirectory.)
+
+You can also specify additional config files that pop-fe/pop-fe-psp will
+automatically eject when you create a PSP EBOOT.
+This is done by storing the config file in the same directory as the cue file
+and with the filename <cue-file>.pspconfig
+
+Image files for PS3 packages
+============================
+PS3 packages uses 3 image files: <cue>_cover.png, <cue>_pic0.png and <cue>_pic1.png
+Cover is the game cover and shown in the game list on the XMB.
+It is square and it will be resized to 176x176 pixels.
+If you provide your own custom image here, create it as 176x176 as then there
+will be no blurring due to rescaling.
+
+Pic0 is the foreground image when the game is selected in the XMB. It is
+1000x560 pixels in size.
+
+Pic1 is the background image when the game is selected in the XMB. It is
+1920x1080 pixels in size.
+
+These files must be named like the cue file.
+Example:
+MyGame.cue -> MyGame_cover.png MyGame_pic0.png MyGame_pic1.png
+
+Installing Memory Card images on PSP
+====================================
+Most memory card image formats are supported.
+To provide a memory card image to install along with the the game
+you just add the filename to the list of images.
+The file extension does not matter as we detect the memory cards by file size.
+Some platforms, such as PSP, require a two step process to install the
+memory cards so follow the onscreen instructions carefully.
+
+Example:
+   ./pop-fe.py --psp-dir=auto Crash.cue Crash.srm
+
+
+You can also install a memory card image directly for an already installed
+game. But before this works, you must have ran the game at least once
+so that the PSP creates the required metadata files in the SAVEDATA
+directory. Since you are not providing a disk image to determine the game-id
+from you must specify game-id explicitely.
+
+Example:
+   ./pop-fe.py --psp-dir=auto --game_id=SCUS94900 --psp-install-memory-card Crash.srm
+
+
+VITA SUPPORT
+============
+Vita is supported and you can install EBOOTs for its memory card also.
+The only difference is that when installing on a PSP you specify the path to the
+root of the SD card. If you want to install to a SD card for a Vita then you
+specify the path to the pspemu directory on the SD card:
+
+Example:  
+$ ./pop-fe.py --psp-dir=/run/media/sahlberg/disk/pspemu/ /psx/Metal\ Gear\ Solid\ VR\ Missions.cue
+
+or just use the auto feature:
+
+$ ./pop-fe.py --psp-dir=auto /psx/Metal\ Gear\ Solid\ VR\ Missions.cue
+
+
+--fetch-metadata
+================
+This argument will download and install
+<cue>_cover.png,
+<cue>_pic0.png,
+<cue>_pic1.png,
+<cue>.snd0,
+<cue>.manual.zip / <cue>.manual.pdf / <cue>.manual  (depending on which
+format the manual is in),
+as well as the game id and title in the directory where the game is stored.
+This requires that the game directory is writeable.
+
+VMP.PY
+======
+vmp.py is a utility to convert between signed VMP memory card images
+(as used by PSP) and raw memory card images as created for example by
+Memory Card Annihilator on the PS2.
+
+
+YOUTUBE
+=======
+Downloading audio from youtube requires that yt-dlp is installed.
+pop-fe will use the yt_dlp python package if it is available and will otherwise
+fall back to using the yt-dlp command line tool, so either
+  pip3 install yt-dlp
+or installing the yt-dlp package for your platform will work.
+For some videos yt-dlp also needs a javascript runtime. It uses deno by default,
+so if downloads start failing, installing deno may help.
+
+SND0.AT3
+========
+For PS3/PSP this is the audio that will be played when this games icon is
+focused on the XMB. It can either be a 16bit/44100/Stereo WAVE file or a
+youtube link.
+If you specify --snd0='auto' then pop-fe will search youtube for the name of
+the game and the string 'ps1 ost' and use the first search result.
+YMMV
+
+The game database in gamedb.py contains curated youtube links for some games.
+IF a game has a curated link then it will be automatically used even if the
+--snd0 argument is not provided.
+Please send patches to populate these fields in gamedb.py with more entries.
+
+
+Examples:
+
+  $ ./pop-fe.py --ps3-pkg=alundra.pkg Alundra.cue --snd0='https://www.youtube.com/watch?v=wKmZTw7bmI0&list=PL2S7vVonTF8UZrKK17J8FBksvYbnqyHz-&index=1'
+  
+  $ ./pop-fe.py --ps3-pkg=alundra.pkg Alundra.cue --snd0=Alundra.WAV
+  
+  $ ./pop-fe.py --ps3-pkg=alundra.pkg Alundra.cue --snd0=auto
+
+If specified as a file it must be WAVE/16bit/stereo/44100Hz.
+
+This file/link will be automatically converted into ATRAC3 format using the
+atracdenc tool.
+
+
+A good way to generate these WAV files is to find a good OST music file for
+the game at youtube and download it in 3GP format. Then convert it to
+44100Hz/Stereo/16bit WAV like so:
+
+$ ffmpeg -i Azure\ Dreams\ OST\ 3.\ Overture.3gp  -ar 44100 -ac 2 Azure\ Dreams\ OST\ 3.\ Overture.wav
+
+
+(See:
+  how to create these type of files by hand:
+    https://atunnic.gitbook.io/tnpsh-wiki/big-stinky-brew/aesthetic/snd0-atrac3
+  relation between EA3 and WAV files for ATRAC3 data:
+    https://github.com/GrapheneCt/ElevenMPV-A/blob/04885b62dcd7dfb318986cf0b553483975b745a6/ElevenMPV-A/source/audio/at3.cpp#L264
+    and
+    https://github.com/GrapheneCt/ElevenMPV-A/blob/04885b62dcd7dfb318986cf0b553483975b745a6/ElevenMPV-A/source/audio/at3.cpp#L132
+  discussions at psx-place:
+    https://www.psx-place.com/threads/pop-fe-a-utility-to-create-psx-classics-packages-for-ps3.37426/
+)
+
+
+MANUAL
+======
+Pop-fe can create a "Software Manual" for PSP and PS3.
+The manual is provided using the --manual command line option, or by
+selecting it in the pop-fe-psp/pop-fe-ps3 GUIs.
+This can be a local file, a local directory or a https link.
+
+A directory  : A directory containing the images for the manual,
+               one image per page.
+               In the GUIs, use the "Directory..." button next to the
+               Manual field to select a directory.
+.zip/.cbz    : A ZIP file containing the images.
+.cbr/.rar    : A RAR file containing the images.
+.pdf         : A PDF document containing scanned pages.
+DOCUMENT.DAT : An already finished manual, in either the PSP or the PS3
+               format. Pop-fe detects which of the two formats the file
+               is in and converts it to the other format if needed.
+
+Zip/cbr/directories will have all the individual image files sorted
+in natural order (i.e. page9 sorts before page10) when they are joined
+together into the manual. Any files in the archive or the directory
+that are not images are ignored.
+
+If no manual was specified, pop-fe will check if there is a manual
+stored next to the disc image. For a game called <game>.cue the
+following names are checked, in order :
+
+<game>.manual.zip    the pages as a ZIP archive
+<game>.manual.cbz
+<game>.manual.cbr    the pages as a RAR archive
+<game>.manual.rar
+<game>.manual.pdf    the pages as a PDF
+<game>.manual.dat    a finished DOCUMENT.DAT
+<game>.manual/       a directory containing one image per page
+<game>.manual        a finished DOCUMENT.DAT  (legacy name)
+
+If nothing is found there either, pop-fe will use the manual from the
+internal game database, if the game has one.
+
+
+USING YOUR OWN MANUALS
+----------------------
+If you have scanned the manual yourself, or downloaded a scan from a
+site such as archive.org or psxdatacenter, there are three ways to use
+it.
+
+1, Point pop-fe directly at it :
+
+  $ ./pop-fe.py --psp-dir=auto --manual="My Game manual.zip" "My Game.cue"
+  $ ./pop-fe.py --psp-dir=auto --manual=/psx/scans/mygame/ "My Game.cue"
+  $ ./pop-fe.py --ps3-pkg=mygame.pkg --manual=https://.../mygame.cbr "My Game.cue"
+
+  In pop-fe-psp and pop-fe-ps3, use the Manual field to pick a file, or
+  the "Directory..." button next to it to pick a directory of images.
+
+2, Store it next to the game, using the same name as the disc image but
+   with a .manual.* extension. Pop-fe will then find and use it
+   automatically every time you convert that game, without you having to
+   specify anything :
+
+  /psx/My Game.cue
+  /psx/My Game.bin
+  /psx/My Game.manual.zip
+
+   This is the recommended way if you keep a library of games, since the
+   manual then travels with the game. The full list of names that are
+   checked is above. A directory works here too, i.e. a directory called
+   "My Game.manual" containing the images.
+
+   Note that "My Game.manual" as a *file* means something different, it
+   is the legacy name for an already finished DOCUMENT.DAT.
+
+3, Let pop-fe download it. Many games already have a manual in the
+   internal game database and it will be used automatically if you did
+   not provide one yourself. --fetch-metadata will store a copy of that
+   manual next to the game, as My Game.manual.zip or similar, so that
+   later conversions do not need to download it again.
+
+Whichever way you provide it, the pages are scaled down and converted
+into a DOCUMENT.DAT which is installed as part of the EBOOT (PSP) or the
+PKG (PS3). On the PSP the manual is opened from the game menu, on the
+PS3 from the "View Manual" option in the XMB.
+
+Some hints :
+
+* One image per page. Any file in the archive/directory that is not an
+  image, such as a readme or a Thumbs.db, is skipped.
+* Name the images so that they sort in the right order. Both
+  "page1.png ... page10.png" and "0001.png ... 0010.png" work.
+* Scans where two pages of the manual were scanned side by side as a
+  single wide image are detected and split into two pages automatically.
+* If the images came out of a PDF, just use the PDF directly. Pop-fe
+  will extract the images from it.
+
+"document.py" can be used to inspect, create and unpack DOCUMENT.DAT
+files by hand :
+
+  $ ./document.py extract --document DOCUMENT.DAT --output /tmp/pages
+  $ ./document.py create --gameid SLUS00594 --directory /tmp/pages \
+                         --document DOCUMENT.DAT
+
+
+PSIO
+====
+PSIO uses a varient of CUE files called CU2.
+To generate a CU2 file when installing PSIO games you need to have the
+CUE2CU2.PY tool installed in the same directory as POP-FE.PY.
+This tool can be downloaded from :
+
+  https://github.com/NRGDEAD/Cue2cu2
+
+Just copy cue2cu2.py to the same directory as pop-fe.py and make it executable :
+
+  chmod +x cue2cu2.py
+
+
+PS2 Support
+===========
+Pop-fe can convert games into VCD format and install it on a USB memory stick
+that has been prepared to be used with POPStarter and OPL to play PS1 games.
+The USB stick must have a POPS subdirectory where the VCD file and memory cards
+will be installed and an ART subdirectory for cover and background images.
+
+PS3 Support
+===========
+Pop-fe can convert games into a PS3 PKG that can be installed on PS3 systems
+with CFW or HEN.
+
+PSClassic support
+=================
+Pop-fe can convert games and install them for use on AutoBleem 1.0 memory
+sticks.
+Multidisc support only works for when running the PBP from retroarch as the
+builtin PCSX emulator does not see to support multidisc PBPs.
+
+RetroArch Support
+=================
+The PSX emulator cores in retroarch support a variety of formats, with m3u and
+pbp files being the most convenient for loading multi-disc games. Pop-fe can
+prepare these formats/schemes for retroarch to load.
+
+Preparations
+------------
+Install ecdsa python module:
+
+$ pip3 install ecdsa
+
+$ cd <directory where pop-fe is installed>
+
+Install PSL1GHT as a subdirectory in the pop-fe directory
+and compile the pgcrypt module:
+
+$ git clone https://github.com/sahlberg/PSL1GHT
+$ cd PSL1GHT/tools/ps3py
+$ git checkout origin/use-python3
+$ make
+$ cd ../../..
+
+Then to use it just run it as
+
+$ ./pop-fe.py --ps3-pkg=Grandia.pkg Grandia_d1.cue Grandia_d2.cue
+
+
+LIBCRYPT
+========
+Libcrypt is a copy protection used on a small number of PAL releases.
+https://red-j.github.io/Libcrypt-PS1-Protection-bible/index.htm
+
+The protection is based on careful corruption of the subchannel data of the
+disk and may prevent the converted games from running on PSP/PS3.
+
+Libcrypt games are automatically patched using
+https://github.com/alex-free/libcrypt-patcher/
+
+PS3
+---
+Libcrypt protected games are automatically patched by injecting the MagicWord
+into the package file.
+(The MagicWord is a compact representation of the subchannel corruption)
+This should be sufficient to allow any games to work when converted to
+a PS3 package.
+
+ADDITONAL DEPENDENCIES:
+=======================
+Iso-parser
+----------
+You need python support to read ISO9660 images. This is needed to be able to
+read system.cnf to discover the game-id.
+I support two different such python extensions since the are not all available
+on all flavors of linux. Pycdio and Pycdlib.
+As long as you have one of them installed things should work.
+
+pip3 install pycdio
+or
+pip3 install pycdlib
+
+cue2cu2
+-------
+Note: this is now a submodule so I am not sure what to change here
+This is a small program that parses a CUE and reformats it into CU2 format.
+It is used by PSIO but also to create the TOC structure we need for PSP
+EBOOTs when a CCD file is not present.
+It is also required when creating PS3 PKGs.
+
+Please install this python script in the same directory as pop-fe.
+It can be downloaded from   https://github.com/NRGDEAD/Cue2cu2
+Make it executable by calling
+
+chmod +x cue2cu2.py
+
+binmerge
+--------
+Note: this is now a submodule so I am not sure what to change here
+This is a small python program to merge multi-bin files into a single bin.
+This is required if you intend to use pop-fe with multi-bin disks.
+
+This tool can be downloaded from
+https://github.com/putnam/binmerge
+and should be placed in the same directory as pop-fe.py.
+
+Make it executable with
+chmod +x binmerge
+
+requests
+--------------
+This is used to fetch data from the internet.
+Install this with :
+pip3 install requests
+
+CDDA SUPPORT
+------------
+CDDA is supported for PSP/VITA/PS3 but requires an external tool to convert the
+audio tracks into ATRAC3 LP2 format.
+If you do not have this tool installed then pop-fe will still create the
+EBOOT.PBP image but without the audio tracks.
+
+The instructions to set this tool up are part of the Linux/Windows install
+instructions below. (atracdenc)
+
+
+INSTALLATION
+============
+Pop-fe has a few external dependencies. It requires python3 and some additional
+bits and pieces. Here are some examples on how to install pop-fe and its
+dependencies on different OSes:
+
+For installations on Linux/Posix/ you need to have a build environment.
+Make sure you have 'git', 'gcc', 'g++', 'make', 'cmake' installed.
+
+
+Fedora42 Automatic Install:
+---------------------------
+sudo dnf group install -y development-tools
+sudo dnf install -y g++
+sudo dnf install -y cmake
+sudo dnf install -y python-is-python3
+sudo dnf install -y pip3
+sudo dnf install -y python3-devel
+sudo dnf install -y python-tkinter
+sudo dnf install -y libsndfile-devel
+sudo dnf install -y ffmpeg
+sudo dnf install -y glibc-static
+git clone --recursive https://github.com/sahlberg/pop-fe.git
+cd pop-fe
+./pop-fe.py --install
+
+
+Debian/Mint Automatic Install:
+------------------------------
+sudo apt install python-is-python3
+sudo apt install python3-pip
+sudo apt install libsndfile-dev
+sudo apt install git
+sudo apt install ffmpeg
+sudo apt install glibc-static
+git clone --recursive https://github.com/sahlberg/pop-fe.git
+cd pop-fe
+./pop-fe.py --install
+
+
+Debian/Mint Manual Install:
+------------------------
+sudo apt install python-is-python3
+sudo apt install python3-pip
+sudo apt install libsndfile-dev
+sudo apt install git
+pip3 install yt-dlp
+pip3 install PyPDF2
+pip3 install requests
+pip3 install pycdlib  (or pip3 install pycdio)
+pip3 install ecdsa
+pip3 install tkinterdnd2
+pip3 install opencv-contrib-python
+pip3 install rarfile
+pip3 install scikit-learn
+pip3 install scipy
+git clone --recursive https://github.com/sahlberg/pop-fe.git
+make -C pop-fe/PSL1GHT/tools/ps3py/
+cmake -B pop-fe/atracdenc/src/ -S pop-fe/atracdenc/src/
+make -C pop-fe/atracdenc/src/
+wget https://github.com/alex-free/libcrypt-patcher/releases/download/v1.0.9/libcrypt-patcher-v1.0.9-linux-i386-static.zip
+unzip -j libcrypt-patcher-v1.0.9-linux-i386-static.zip */lcp
+
+
+Android (Termux https://f-droid.org/en/packages/com.termux/) Manual Install:
+------------------------
+pkg install build-essential git patchelf python-pip python-pillow opencv-python ninja libsndfile
+pip install yt-dlp PyPDF2 requests pycdlib ecdsa tkinterdnd2 rarfile pycryptodome
+git clone --recursive https://github.com/sahlberg/pop-fe.git
+make -C pop-fe/PSL1GHT/tools/ps3py/
+cmake -B pop-fe/atracdenc/src/ -S pop-fe/atracdenc/src/
+make -C pop-fe/atracdenc/src/
+
+Windows (x86_64)
+----------------
+Windows hs prebuilt binary releases of pop-fe available at :
+https://github.com/sahlberg/pop-fe/releases
+If you use these you do not need to perform the manual install described below.
+
+
+Install Mingw64/MSYS2
+Open Mingw64 Prompt and type
+
+export PATH=$PATH:/mingw64/bin
+pacman -S mingw-w64-x86_64-gcc
+pacman -S make
+pacman -S mingw-w64-x86_64-python
+pacman -S git
+pacman -S unzip
+pacman -S mingw-w64-x86_64-python-pip
+pacman -S mingw-w64-x86_64-python-pillow
+pip3 uninstall pillow
+pip3 install pillow
+pip3 install PyPDF2
+pip3 install requests
+pip3 install pycdlib
+pip3 install pycryptodome
+pip3 install ecdsa
+pip3 install opencv-contrib-python
+pip3 install rarfile
+pip3 install scikit-learn
+pip3 install scipy
+git clone https://github.com/sahlberg/pop-fe.git
+git clone https://github.com/NRGDEAD/Cue2cu2.git
+git clone https://github.com/putnam/binmerge.git
+cd pop-fe
+cp ../Cue2cu2/cue2cu2.py .
+chmod +x cue2cu2.py
+cp ../binmerge/binmerge .
+chmod +x binmerge
+git clone http://github.com/sahlberg/PSL1GHT
+cd PSL1GHT/tools/ps3py
+git checkout origin/use-python3
+make
+cd ../../..
+wget https://github.com/dcherednik/atracdenc/releases/download/0.0.3/atracdenc-x86_0.0.3.zip
+unzip -j atracdenc-x86_0.0.3 -x README.TXT
+wget https://github.com/alex-free/libcrypt-patcher/releases/download/v1.0.9/libcrypt-patcher-v1.0.9-linux-i386-static.zip
+unzip -j libcrypt-patcher-v1.0.9-linux-i386-static.zip */lcp
+pip install pyinstaller
+pip install pygubu
+pyinstaller PSL1GHT/tools/ps3py/pkg.py
+pyinstaller cue2cu2.py
+pyinstaller binmerge
+pyinstaller sign3.py
+pyinstaller --add-data "PS3LOGO.DAT;." pop-fe.py
+pyinstaller --add-data "PS3LOGO.DAT;." --add-data "pop-fe-ps3.ui;." pop-fe-ps3.py --hidden-import pop-fe --hidden-import pygubu.builder.tkstdwidgets --hidden-import pygubu.builder.ttkstdwidgets --hidden-import pygubu.builder.widgets.pathchooserinput
+mkdir dist/pop-fe-ps3/atracdenc
+mkdir dist/pop-fe-ps3/atracdenc/src
+cp dist/binmerge/binmerge.exe dist/pop-fe-ps3/.
+cp dist/cue2cu2/cue2cu2.exe dist/pop-fe-ps3/.
+cp dist/pkg/pkg.exe dist/pop-fe-ps3/.
+cp dist/pkg/pkgcrypt.cp39-mingw_x86_64.pyd dist/pop-fe-ps3/.
+cp dist/pop-fe/pop-fe.exe dist/pop-fe-ps3/.
+cp dist/sign3/sign3.exe dist/pop-fe-ps3/.
+cp atracdenc.exe dist/pop-fe-ps3/atracdenc/src/.
+
+
+On windows, always run pop-fe from git-bash and from within the pop-fe
+directory.
+The directory names for the E: drive-letter is /e etc in the git-bash shell
+so use --psp-dir=/e or --psp-dir=auto
+
+You may need to run this command every time you open the MSYS2 shell:
+export PATH=$PATH:/mingw64/bin
+
+
+POP-FE-PS3
+==========
+pop-fe-ps3.py is a graphical frontend to pop-fe:create_ps3() and can be used to
+create PS3 packages from a GUI instead of using the command line.
+
+Docker
+----------------
+# You can also run pop-fe inside a docker container.
+# Assuming Docker is already installed on your preferred distro, run:
+docker build -t pop-fe https://github.com/sahlberg/pop-fe.git
+
+# You can then execute pop-fe directly:
+docker run -it pop-fe:latest --help
+# or get a shell and run pop-fe interactively:
+docker run -it --entrypoint /bin/bash pop-fe:latest
+./pop-fe.py
+
+# Here is another Docker example where we mount the current host directory into the container at "/psp".
+# Directory structure:
+# .
+# ├── game.bin
+# ├── game.cue
+# └── pspemu/
+#     └── PSP/
+#         └── GAME/
+docker run -it --volume "$(pwd):/psp" pop-fe:latest --psp-dir=/psp/pspemu /psp/game.cue
+
