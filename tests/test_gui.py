@@ -198,3 +198,12 @@ def test_pad_buttons(app, tmp_path: Path):
     assert app.focus_key != "row0"
     app.on_pad_button(pygame.CONTROLLER_BUTTON_BACK)       # Select/Back key: back
     assert app.screen == "home"
+
+
+def test_window_scale_is_compact():
+    from psone2ps3pkg.gui import theme as th
+
+    assert th.pick_scale((2560, 1440)) == 1.25   # 800x600
+    assert th.pick_scale((3840, 2160)) == 1.75   # 1120x840
+    assert th.pick_scale((1920, 1080)) == 1.0    # 640x480, never smaller
+    assert th.pick_scale((1366, 768)) == 1.0

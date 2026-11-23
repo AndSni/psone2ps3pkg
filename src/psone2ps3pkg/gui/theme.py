@@ -50,11 +50,15 @@ def set_scale(k: float) -> None:
     reset_fonts()
 
 
+SCREEN_SHARE = 0.425  # how much of the screen the window may use
+
+
 def pick_scale(desktop: tuple[int, int] | None) -> float:
-    """Largest quarter-step scale that keeps the window within ~85 % of the screen."""
+    """Quarter-step scale for a compact window: about 42 % of the screen
+    (800x600 on 2560x1440), never smaller than 640x480."""
     if not desktop or desktop[0] <= 0:
         return 1.0
-    k = min(desktop[0] * 0.85 / W, desktop[1] * 0.85 / H)
+    k = min(desktop[0] * SCREEN_SHARE / W, desktop[1] * SCREEN_SHARE / H)
     return max(1.0, math.floor(k * 4) / 4)
 
 
