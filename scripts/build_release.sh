@@ -60,6 +60,7 @@ echo "== pyinstaller onedir =="
     --name psone2ps3pkg \
     --add-data "$STAGE_VENDOR:vendor/pop-fe" \
     --add-data "$REPO_ROOT/src/psone2ps3pkg/gui/icon.png:psone2ps3pkg/gui" \
+    --add-data "$REPO_ROOT/src/psone2ps3pkg/gui/fonts:psone2ps3pkg/gui/fonts" \
     --collect-all pygame \
     --collect-all PIL \
     --collect-all Crypto \

@@ -24,6 +24,10 @@ copyrights; the MIT License above does not apply to them:
     binmerge by Chris Putnam — https://github.com/putnam/binmerge
     MIT License — see vendor/pop-fe/binmerge/LICENSE
 
+- src/psone2ps3pkg/gui/fonts/NotoSans-SemiBold.ttf
+    Noto Sans by The Noto Project Authors — https://github.com/notofonts
+    SIL Open Font License 1.1 — see src/psone2ps3pkg/gui/fonts/OFL.txt
+
 Exact upstream revisions are recorded in vendor/VENDOR.md.
 
 This project is an unofficial tool. It is not affiliated with or endorsed by

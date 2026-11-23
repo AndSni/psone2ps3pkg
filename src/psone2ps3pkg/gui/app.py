@@ -180,12 +180,20 @@ class App:
                 pygame.display.set_icon(pygame.image.load(str(ICON)))
             except pygame.error:
                 pass
-        if os.environ.get("SDL_VIDEODRIVER") == "dummy":
-            return pygame.display.set_mode((th.W, th.H))
-        try:
-            surf = pygame.display.set_mode((th.W, th.H), pygame.SCALED, vsync=1)
-        except pygame.error:
-            surf = pygame.display.set_mode((th.W, th.H), pygame.SCALED)
+        # Draw at the real window size (no pixel upscaling): layout units are
+        # multiplied by th.K, picked from the screen size.
+        forced = os.environ.get("PSONE2PS3PKG_SCALE")
+        if forced:
+            th.set_scale(float(forced))
+        elif os.environ.get("SDL_VIDEODRIVER") == "dummy":
+            th.set_scale(1.0)
+        else:
+            try:
+                sizes = pygame.display.get_desktop_sizes()
+            except pygame.error:
+                sizes = []
+            th.set_scale(th.pick_scale(sizes[0] if sizes else None))
+        surf = pygame.display.set_mode(th.window_size())
         pygame.key.set_repeat(320, 60)
         return surf
 
@@ -520,11 +528,11 @@ class App:
                 self.press(mapping[ev.button])
         elif ev.type == pygame.MOUSEMOTION:
             for it in self.items:
-                if it.rect and it.rect.collidepoint(ev.pos):
+                if it.rect and it.rect.collidepoint(th.to_layout(ev.pos)):
                     self.focus_key = it.key
                     break
         elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
-            self.on_click(ev.pos)
+            self.on_click(th.to_layout(ev.pos))
         elif ev.type == pygame.MOUSEWHEEL:
             self.on_wheel(-ev.y)
 
@@ -678,7 +686,7 @@ class App:
         # boot fade
         age = time.monotonic() - self.start_time
         if age < 0.7:
-            veil = pygame.Surface((th.W, th.H))
+            veil = pygame.Surface(s.get_size())
             veil.set_alpha(int(255 * (1 - age / 0.7)))
             s.blit(veil, (0, 0))
 
@@ -690,7 +698,7 @@ class App:
         th.text(s, "PS3PKG", 30, (26 + w + w2, 14), th.TEXT)
         th.text(s, title, 18, (th.W // 2 + 40, 20), th.DIM, align="center")
         th.text(s, right or f"v{__version__}", 16, (th.W - 20, 22), th.FAINT, align="right")
-        pygame.draw.line(s, (80, 86, 130), (20, 46), (th.W - 20, 46))
+        th.line(s, (80, 86, 130), (20, 46), (th.W - 20, 46))
 
     def focused(self, key: str) -> bool:
         return self.focus_key == key
@@ -700,20 +708,6 @@ class App:
         self.header(s, "")
         zone = pygame.Rect(50, 66, th.W - 100, 252)
         th.panel(s, zone, (10, 14, 40, 170))
-        # animated dashed frame
-        inner = zone.inflate(-16, -16)
-        dash, gap = 10, 8
-        off = int(self.t * 20) % (dash + gap)
-        for x in range(inner.left - off, inner.right, dash + gap):
-            a, b = max(x, inner.left), min(x + dash, inner.right)
-            if a < b:
-                pygame.draw.line(s, th.EDGE_LIGHT, (a, inner.top), (b, inner.top))
-                pygame.draw.line(s, th.EDGE_LIGHT, (a, inner.bottom), (b, inner.bottom))
-        for y in range(inner.top - off, inner.bottom, dash + gap):
-            a, b = max(y, inner.top), min(y + dash, inner.bottom)
-            if a < b:
-                pygame.draw.line(s, th.EDGE_LIGHT, (inner.left, a), (inner.left, b))
-                pygame.draw.line(s, th.EDGE_LIGHT, (inner.right, a), (inner.right, b))
         th.disc(s, (zone.centerx, zone.top + 92), 58, self.t)
         th.text(s, "DROP DISC IMAGES OR A FOLDER HERE", 24, (zone.centerx, zone.top + 170), align="center")
         th.text(s, "CUE + BIN  ·  CHD  ·  ISO  ·  IMG  —  ONE GAME OR A WHOLE COLLECTION", 15,
@@ -766,15 +760,13 @@ class App:
             y = lr.top + 3 + (i - self.scroll) * self.ROW_H
             row = pygame.Rect(lr.left + 3, y, lr.width - 18, self.ROW_H - 1)
             if self.focused(key):
-                hl = pygame.Surface(row.size, pygame.SRCALPHA)
-                hl.fill((120, 170, 255, 46))
-                s.blit(hl, row.topleft)
-                pygame.draw.rect(s, th.ACCENT, row, 1)
+                th.fill_alpha(s, row, (120, 170, 255, 46))
+                th.rect(s, th.ACCENT, row, 1)
             cb = pygame.Rect(row.left + 10, row.centery - 9, 18, 18)
             th.checkbox(s, cb, self.checked.get(self.game_key(g), False))
             info = pygame.Rect(row.right - 34, row.centery - 11, 22, 22)
-            pygame.draw.circle(s, th.DIM, info.center, 10, 2)
-            th.text(s, "i", 17, (info.centerx, info.top + 4), th.DIM, align="center", shadow=False)
+            th.circle(s, th.DIM, info.center, 10, 1.5)
+            th.text(s, "i", 17, (info.centerx, info.top + 2), th.DIM, align="center", shadow=False)
             th.text(s, g.title, 19, (row.left + 40, row.top + 5), max_w=row.width - 90)
             discs = len(g.discs)
             sub = f"{' + '.join(g.serials)}  ·  {g.region}  ·  {discs} DISC{'S' if discs > 1 else ''}  ·  {g.kinds}"
@@ -791,10 +783,10 @@ class App:
             self.items.insert(len(self.items) - 1, Item(f"info{i}", info, lambda g=g: self.show_details(g)))
         if len(games) > vis:
             track = pygame.Rect(lr.right - 10, lr.top + 4, 5, lr.height - 8)
-            pygame.draw.rect(s, (40, 44, 80), track)
+            th.rect(s, (40, 44, 80), track)
             h = max(16, track.height * vis // len(games))
             y = track.top + (track.height - h) * self.scroll // max(1, len(games) - vis)
-            pygame.draw.rect(s, th.EDGE_LIGHT, (track.left, y, track.width, h))
+            th.rect(s, th.EDGE_LIGHT, (track.left, y, track.width, h))
 
         # skipped line
         if self.lib.skipped:
@@ -821,17 +813,15 @@ class App:
         for j, (key, label, value, enabled, left, right) in enumerate(rows):
             r = pygame.Rect(op.left + 4, op.top + 4 + j * 25, op.width - 8, 25)
             if self.focused(key) and enabled:
-                hl = pygame.Surface(r.size, pygame.SRCALPHA)
-                hl.fill((120, 170, 255, 40))
-                s.blit(hl, r.topleft)
+                th.fill_alpha(s, r, (120, 170, 255, 40))
             th.text(s, label, 16, (r.left + 10, r.top + 6), th.DIM if enabled else th.FAINT, shadow=False)
             colour = th.TEXT if enabled else th.FAINT
             vx = r.left + OPTION_VALUE_X
             if enabled:
                 arrow_c = th.ACCENT if self.focused(key) else th.FAINT
-                pygame.draw.polygon(s, arrow_c, [(vx, r.centery), (vx + 8, r.centery - 6), (vx + 8, r.centery + 6)])
+                th.polygon(s, arrow_c, [(vx, r.centery), (vx + 8, r.centery - 6), (vx + 8, r.centery + 6)])
                 ex = r.right - 14
-                pygame.draw.polygon(s, arrow_c, [(ex, r.centery), (ex - 8, r.centery - 6), (ex - 8, r.centery + 6)])
+                th.polygon(s, arrow_c, [(ex, r.centery), (ex - 8, r.centery - 6), (ex - 8, r.centery + 6)])
             th.text(s, value, 17, (vx + 18, r.top + 5), colour, max_w=r.right - vx - 50,
                     left_ellipsis=key == "out", shadow=False)
             if enabled:
@@ -902,14 +892,14 @@ class App:
                 th.text(s, "…", 18, (box.left + 14, y), th.DIM)
                 break
             if r.ok:
-                pygame.draw.lines(s, th.OK, False, [(box.left + 14, y + 10), (box.left + 20, y + 16), (box.left + 30, y + 3)], 3)
+                th.lines(s, th.OK, False, [(box.left + 14, y + 10), (box.left + 20, y + 16), (box.left + 30, y + 3)], 2.5)
                 th.text(s, r.game.title, 19, (box.left + 42, y), max_w=box.width - 60)
                 where = str(r.outputs[0]) if r.outputs else ""
                 th.text(s, where, 14, (box.left + 42, y + 20), th.DIM, max_w=box.width - 60,
                         left_ellipsis=True, shadow=False)
             else:
-                pygame.draw.line(s, th.BAD, (box.left + 16, y + 3), (box.left + 28, y + 15), 3)
-                pygame.draw.line(s, th.BAD, (box.left + 16, y + 15), (box.left + 28, y + 3), 3)
+                th.line(s, th.BAD, (box.left + 16, y + 3), (box.left + 28, y + 15), 2.5)
+                th.line(s, th.BAD, (box.left + 16, y + 15), (box.left + 28, y + 3), 2.5)
                 th.text(s, r.game.title, 19, (box.left + 42, y), max_w=box.width - 60)
                 err = (r.error or "").strip().splitlines()
                 th.text(s, err[0] if err else "failed", 14, (box.left + 42, y + 20), th.BAD,
@@ -960,9 +950,7 @@ class App:
                 continue
             r = pygame.Rect(box.left + 4, box.top + 4 + (i - b.scroll) * 26, box.width - 8, 26)
             if self.focused(key):
-                hl = pygame.Surface(r.size, pygame.SRCALPHA)
-                hl.fill((120, 170, 255, 50))
-                s.blit(hl, r.topleft)
+                th.fill_alpha(s, r, (120, 170, 255, 50))
             colour = th.OK if kind == "use" else (th.TEXT if kind == "file" else th.ACCENT)
             th.text(s, label, 17, (r.left + 10, r.top + 5), colour, max_w=r.width - 20, shadow=False)
             self.items.append(Item(key, r, lambda i=i: b.choose(i), row=i))
@@ -974,13 +962,11 @@ class App:
     def draw_overlay(self, s: pygame.Surface) -> None:
         ov = self.overlay
         assert ov is not None
-        dim = pygame.Surface((th.W, th.H), pygame.SRCALPHA)
-        dim.fill((0, 0, 10, 160))
-        s.blit(dim, (0, 0))
+        th.fill_alpha(s, (0, 0, th.W, th.H), (0, 0, 10, 160))
         box = pygame.Rect(40, 50, th.W - 80, 380)
         th.panel(s, box, (16, 20, 54, 245))
         th.text(s, ov.title, 21, (box.left + 16, box.top + 12), max_w=box.width - 32)
-        pygame.draw.line(s, (80, 86, 130), (box.left + 12, box.top + 40), (box.right - 12, box.top + 40))
+        th.line(s, (80, 86, 130), (box.left + 12, box.top + 40), (box.right - 12, box.top + 40))
         wrapped: list[tuple[str, tuple]] = []
         for line, colour in ov.lines:
             for w in th.wrap(line, 16, box.width - 36) if line else [""]:

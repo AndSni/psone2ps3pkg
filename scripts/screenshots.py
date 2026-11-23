@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+os.environ.setdefault("PSONE2PS3PKG_SCALE", "2")  # draw at 1280x960, sharp
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
 import pygame  # noqa: E402
@@ -35,9 +36,8 @@ def pump(app: App, seconds: float = 0.0, until=None, timeout: float = 600) -> No
 
 def save(app: App, out: Path, name: str) -> None:
     app.tick(1 / 60, [])
-    big = pygame.transform.scale_by(app.surface, 2)
     path = out / f"{name}.png"
-    pygame.image.save(big, str(path))
+    pygame.image.save(app.surface, str(path))
     print("saved", path)
 
 
