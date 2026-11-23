@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "psone2ps3pkg"
-version = "0.2.4"
+version = "0.2.5"
 description = "Drag-and-drop desktop app that turns PlayStation 1 disc images into PS3 PKG, PSP/Vita EBOOT or PS2 POPStarter files."
 readme = "README.md"
 requires-python = ">=3.10"
