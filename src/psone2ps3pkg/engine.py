@@ -79,7 +79,8 @@ def ensure_engine(log: Logger = lambda _s: None) -> Engine:
     _build_pkgcrypt(work / "PSL1GHT" / "tools" / "ps3py", log)
     shim_dir = _write_shim(runtime_dir() / "shim")
 
-    env = os.environ.copy()
+    env = host_env()
+    env["PYTHONUNBUFFERED"] = "1"
     ps3py = str(work / "PSL1GHT" / "tools" / "ps3py")
     env["PYTHONPATH"] = os.pathsep.join(p for p in (ps3py, env.get("PYTHONPATH", "")) if p)
     env["PATH"] = os.pathsep.join(p for p in (str(shim_dir), env.get("PATH", "")) if p)
@@ -107,13 +108,35 @@ def _write_shim(shim_dir: Path) -> Path:
     return shim_dir
 
 
+def host_env() -> dict[str, str]:
+    """os.environ without the library path a frozen build injects.
+
+    PyInstaller points LD_LIBRARY_PATH at its bundled libraries. Host tools
+    (chdman, zenity, xdg-open) must not load those, so restore the original.
+    """
+    env = os.environ.copy()
+    if getattr(sys, "frozen", False):
+        orig = env.pop("LD_LIBRARY_PATH_ORIG", None)
+        if orig is not None:
+            env["LD_LIBRARY_PATH"] = orig
+        else:
+            env.pop("LD_LIBRARY_PATH", None)
+    return env
+
+
 def _revision(src: Path) -> str:
+    from psone2ps3pkg import __version__
+
     marker = src / ".vendor-revision"
     if marker.is_file():
-        return marker.read_text().strip()
-    # Fall back to a cheap content signature.
-    newest = max((p.stat().st_mtime for p in src.rglob("*.py")), default=0.0)
-    return f"mtime:{newest:.0f}"
+        base = marker.read_text().strip()
+    else:
+        # Fall back to a cheap content signature.
+        newest = max((p.stat().st_mtime for p in src.rglob("*.py")), default=0.0)
+        base = f"mtime:{newest:.0f}"
+    # Our own version is part of the stamp: a release can add files to the
+    # vendored tree (e.g. pspconfigs/) without a new upstream revision.
+    return f"{base}+app{__version__}"
 
 
 def _build_pkgcrypt(ps3py: Path, log: Logger) -> None:
@@ -150,28 +173,41 @@ def find_chdman() -> str | None:
     return shutil.which("chdman")
 
 
-def game_title(serial: str | None) -> str | None:
-    """Look up a proper game title in pop-fe's offline game database."""
+_GAMEDB: dict | None = None
+
+
+def _gamedb() -> dict:
+    """pop-fe's offline game database (serial -> metadata), loaded once."""
+    global _GAMEDB
+    if _GAMEDB is None:
+        src = vendored_popfe()
+        added = str(src) not in sys.path
+        if added:
+            sys.path.insert(0, str(src))
+        try:
+            import gamedb  # type: ignore
+
+            _GAMEDB = dict(gamedb.games)
+        except Exception:  # noqa: BLE001 - db is a nice-to-have, never fatal
+            _GAMEDB = {}
+        finally:
+            if added:
+                try:
+                    sys.path.remove(str(src))
+                except ValueError:
+                    pass
+    return _GAMEDB
+
+
+def game_entry(serial: str | None) -> dict | None:
     if not serial:
         return None
-    src = vendored_popfe()
-    key = serial.replace("-", "").replace("_", "").upper()
-    added = str(src) not in sys.path
-    if added:
-        sys.path.insert(0, str(src))
-    try:
-        import gamedb  # type: ignore
+    entry = _gamedb().get(serial.replace("-", "").replace("_", "").upper())
+    return entry if isinstance(entry, dict) else None
 
-        entry = gamedb.games.get(key)
-    except Exception:  # noqa: BLE001 - db is a nice-to-have, never fatal
-        return None
-    finally:
-        if added:
-            try:
-                sys.path.remove(str(src))
-            except ValueError:
-                pass
-    if isinstance(entry, dict):
-        title = entry.get("title")
-        return str(title) if title else None
-    return None
+
+def game_title(serial: str | None) -> str | None:
+    """Look up a proper game title in pop-fe's offline game database."""
+    entry = game_entry(serial)
+    title = entry.get("title") if entry else None
+    return str(title) if title else None

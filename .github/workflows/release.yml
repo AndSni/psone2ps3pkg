@@ -9,37 +9,34 @@ permissions:
   contents: write
 
 jobs:
-  linux-binary:
-    # 22.04 => glibc 2.35, so the binary runs on reasonably old distros too.
-    runs-on: ubuntu-22.04
+  appimage:
+    runs-on: ubuntu-24.04
+    # Debian 11 => glibc 2.31: the AppImage runs on Ubuntu 20.04+, Debian 11+,
+    # Fedora 32+, and other distributions of that age or newer.
+    container: python:3.12-bullseye
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install build tools
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc
-
-      - name: Build standalone binary
+      - name: Build AppImage
         run: ./scripts/build_release.sh
 
       - name: Smoke test
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
-          dist/psone2ps3pkg --version
-          dist/psone2ps3pkg --check
+          app=$(ls dist/*.AppImage)
+          "$app" --version
+          "$app" --check
 
-      - name: Stage asset
+      - name: Stage assets
         run: |
           mkdir -p out
-          cp dist/psone2ps3pkg out/psone2ps3pkg-linux-x86_64
-          cp packaging/psone2ps3pkg.desktop scripts/install.sh out/
-          ( cd out && sha256sum psone2ps3pkg-linux-x86_64 > psone2ps3pkg-linux-x86_64.sha256 )
+          cp dist/*.AppImage out/
+          cd out && sha256sum *.AppImage > SHA256SUMS
 
       - uses: actions/upload-artifact@v4
         with:
-          name: psone2ps3pkg-linux-x86_64
+          name: psone2ps3pkg-appimage
           path: out/*
 
       - name: Attach to release

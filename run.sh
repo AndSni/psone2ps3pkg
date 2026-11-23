@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Create a local .venv on first run, then launch. Arguments pass straight through:
-#   ./run.sh                       # drag-and-drop TUI
-#   ./run.sh /path/to/game/folder  # build headlessly for that folder
+#   ./run.sh                       # open the window
+#   ./run.sh --headless PATH       # build without a window
 #   ./run.sh --check               # verify the build tools are present
 set -euo pipefail
 cd "$(dirname "$0")"

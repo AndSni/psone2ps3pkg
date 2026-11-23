@@ -1,0 +1,140 @@
+"""Drive the real pygame window headless (SDL dummy video driver)."""
+
+from __future__ import annotations
+
+import time
+from pathlib import Path
+
+import pygame
+import pytest
+
+from psone2ps3pkg.convert import Result, Target
+from psone2ps3pkg.gui import app as gui_app
+from test_library import write_cue_game
+
+
+def pump(app, until, timeout: float = 10.0, events=()) -> None:
+    for ev in events:
+        pygame.event.post(ev)
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        app.tick(1 / 60, pygame.event.get())
+        if until():
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"timed out on screen={app.screen} overlay={app.overlay}")
+
+
+def key(k):
+    return pygame.event.Event(pygame.KEYDOWN, key=k, mod=0, unicode="", scancode=0)
+
+
+@pytest.fixture
+def app():
+    a = gui_app.App()
+    yield a
+    a.shutdown()
+
+
+def test_home_screen_has_both_pickers(app):
+    pump(app, lambda: True)
+    keys = [it.key for it in app.items]
+    assert "folder" in keys and "file" in keys
+
+
+def test_drop_folder_lists_games(app, tmp_path: Path):
+    write_cue_game(tmp_path, "Alpha", "SLUS_900.11")
+    write_cue_game(tmp_path, "Beta", "SLUS_900.12")
+    (tmp_path / "x.rar").write_bytes(b"r")
+    pump(app, lambda: app.screen == "games",
+         events=[pygame.event.Event(pygame.DROPFILE, file=str(tmp_path))])
+    assert [g.title for g in app.lib.games] == ["Alpha", "Beta"]
+    assert len(app.selected_games()) == 2
+    pump(app, lambda: True)
+    assert "skipped" in [it.key for it in app.items]
+
+
+def test_second_drop_merges(app, tmp_path: Path):
+    write_cue_game(tmp_path / "a", "Alpha", "SLUS_900.13")
+    write_cue_game(tmp_path / "b", "Beta", "SLUS_900.14")
+    pump(app, lambda: app.screen == "games",
+         events=[pygame.event.Event(pygame.DROPFILE, file=str(tmp_path / "a"))])
+    pump(app, lambda: app.screen == "games" and len(app.lib.games) == 2,
+         events=[pygame.event.Event(pygame.DROPFILE, file=str(tmp_path / "b"))])
+
+
+def test_empty_drop_shows_message(app, tmp_path: Path):
+    (tmp_path / "notes.txt").write_text("nothing")
+    pump(app, lambda: app.overlay is not None,
+         events=[pygame.event.Event(pygame.DROPFILE, file=str(tmp_path))])
+    assert app.screen == "home"
+    assert app.overlay.title == "NO GAMES FOUND"
+    pump(app, lambda: app.overlay is None, events=[key(pygame.K_RETURN)])
+
+
+def test_keyboard_options_and_toggle(app, tmp_path: Path):
+    write_cue_game(tmp_path, "Alpha", "SLUS_900.15")
+    pump(app, lambda: app.screen == "games",
+         events=[pygame.event.Event(pygame.DROPFILE, file=str(tmp_path))])
+    pump(app, lambda: True)
+    app.focus_key = "target"
+    pump(app, lambda: app.options.target is Target.PSP, events=[key(pygame.K_RIGHT)])
+    pump(app, lambda: app.options.target is Target.PS2, events=[key(pygame.K_RIGHT)])
+    app.focus_key = "row0"
+    pump(app, lambda: not app.selected_games(), events=[key(pygame.K_SPACE)])
+    pump(app, lambda: len(app.selected_games()) == 1, events=[key(pygame.K_a)])
+    pump(app, lambda: app.overlay is not None, events=[key(pygame.K_i)])
+
+
+def test_convert_flow_with_fake_engine(app, tmp_path: Path, monkeypatch):
+    write_cue_game(tmp_path, "Alpha", "SLUS_900.16")
+    write_cue_game(tmp_path, "Beta", "SLUS_900.17")
+    calls = []
+
+    def fake_build(game, options, on_line, cancel):
+        calls.append((game.title, options.target))
+        on_line(f"building {game.title}")
+        if game.title == "Beta":
+            return Result(game, error="pop-fe exited with status 1.\nLast lines:\nboom")
+        out = tmp_path / f"{game.title}.pkg"
+        out.write_bytes(b"\x7fPKG")
+        return Result(game, outputs=[out], content_id="UP9000-X")
+
+    monkeypatch.setattr(gui_app, "build_game", fake_build)
+    pump(app, lambda: app.screen == "games",
+         events=[pygame.event.Event(pygame.DROPFILE, file=str(tmp_path))])
+    pump(app, lambda: True)
+    assert app.focus_key == "start"
+    pump(app, lambda: app.screen == "done", events=[key(pygame.K_RETURN)])
+    assert [r.ok for r in app.results] == [True, False]
+    assert calls == [("Alpha", Target.PS3), ("Beta", Target.PS3)]
+    pump(app, lambda: True)
+    assert any(it.key.startswith("err") for it in app.items)
+
+
+def test_builtin_browser_picks_folder(app, tmp_path: Path, monkeypatch):
+    write_cue_game(tmp_path / "games", "Alpha", "SLUS_900.18")
+    app.last_dir = tmp_path
+    monkeypatch.setattr(gui_app.picker, "available", lambda: None)
+    app.choose("folder")
+    assert app.browser is not None
+    pump(app, lambda: True)
+    names = [e[0] for e in app.browser.entries]
+    assert names[0] == "USE THIS FOLDER" and "games/" in names
+    app.browser.choose(names.index("games/"))
+    app.browser.choose(0)
+    pump(app, lambda: app.screen == "games")
+    assert app.lib.games[0].title == "Alpha"
+
+
+def test_settings_persist(tmp_path: Path):
+    a = gui_app.App()
+    a.options.target = Target.PSP
+    a.options.output_dir = tmp_path
+    a.shutdown()
+    b = gui_app.App()
+    try:
+        assert b.options.target is Target.PSP
+        assert b.options.output_dir == tmp_path
+    finally:
+        b.shutdown()

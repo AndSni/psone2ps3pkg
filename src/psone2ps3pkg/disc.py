@@ -134,14 +134,55 @@ def scan_directory(directory: str | Path) -> DiscImage:
     )
 
 
-def _cue_tracks(cue: Path) -> list[Path]:
+def cue_file_entries(cue: Path) -> list[str]:
+    """The raw FILE names a cue sheet lists, in order."""
     text = cue.read_text(errors="replace")
-    names = re.findall(r'FILE\s+"([^"]+)"', text) or re.findall(r"FILE\s+(\S+)", text)
-    out: list[Path] = []
-    for name in names:
-        p = Path(name)
-        out.append(p if p.is_absolute() else cue.parent / p.name)
+    out: list[str] = []
+    for line in text.splitlines():
+        m = re.match(r'\s*FILE\s+"([^"]+)"', line, re.IGNORECASE) or re.match(
+            r"\s*FILE\s+(\S+)", line, re.IGNORECASE
+        )
+        if m:
+            out.append(m.group(1))
     return out
+
+
+def resolve_cue_file(cue: Path, name: str) -> Path:
+    """Find the track file a cue FILE entry means.
+
+    Cue sheets in the wild often carry Windows paths (``D:\\RIPS\\GAME.BIN``) or
+    a different letter case than the real file. The track is taken to live next
+    to the cue; the match falls back to a case-insensitive basename compare.
+    """
+    base = re.split(r"[\\/]", name)[-1]
+    direct = Path(name)
+    if direct.is_absolute() and direct.is_file():
+        return direct
+    candidate = cue.parent / base
+    if candidate.is_file():
+        return candidate
+    lower = base.lower()
+    try:
+        for entry in cue.parent.iterdir():
+            if entry.name.lower() == lower and entry.is_file():
+                return entry
+    except OSError:
+        pass
+    return candidate  # missing; the caller reports it
+
+
+def cue_needs_rewrite(cue: Path) -> bool:
+    """True when pop-fe would not find the cue's tracks by the literal names."""
+    for name in cue_file_entries(cue):
+        p = Path(name)
+        literal = p if p.is_absolute() else cue.parent / name
+        if not literal.is_file():
+            return True
+    return False
+
+
+def _cue_tracks(cue: Path) -> list[Path]:
+    return [resolve_cue_file(cue, n) for n in cue_file_entries(cue)]
 
 
 # --------------------------------------------------------------------------- #

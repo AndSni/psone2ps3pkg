@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Build a standalone Linux onefile executable with PyInstaller.
+# Build the single-file Linux AppImage:  dist/psone2ps3pkg-<version>-x86_64.AppImage
 #
-# The committed vendor/pop-fe stays source-only (pkgcrypt is normally compiled
-# on first run — see engine.py). For a frozen binary there is no compiler on
-# the end user's machine, so this script stages a private copy of vendor/,
-# precompiles pkgcrypt against the exact interpreter PyInstaller is about to
-# embed, and bundles that staged copy instead. engine.py finds the prebuilt
-# .so at runtime and skips compilation.
+# 1. An isolated venv installs the app + PyInstaller.
+# 2. A private copy of vendor/pop-fe gets pkgcrypt precompiled against the exact
+#    interpreter PyInstaller embeds (end users need no compiler).
+# 3. PyInstaller builds a one-folder bundle (fast start, no unpack to /tmp).
+# 4. appimagetool wraps that folder into one executable file.
+#
+# For wide glibc compatibility, run this on an old base (CI uses Debian 11,
+# glibc 2.31). Needs: python3 (3.10+) with headers, gcc, curl or wget.
+# PYTHON=/path/to/python3 selects the interpreter.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -14,19 +17,27 @@ REPO_ROOT="$(pwd)"
 BUILD="$REPO_ROOT/build/frozen"
 VENV="$BUILD/venv"
 STAGE_VENDOR="$BUILD/vendor/pop-fe"
+APPDIR="$BUILD/AppDir"
+TOOLS="$REPO_ROOT/build/tools"
+PY="${PYTHON:-python3}"
+ARCH=x86_64
 
-rm -rf "$BUILD" dist/psone2ps3pkg
-mkdir -p "$BUILD"
+VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/psone2ps3pkg/__init__.py)"
+OUT="dist/psone2ps3pkg-$VERSION-$ARCH.AppImage"
+
+rm -rf "$BUILD" "$OUT"
+mkdir -p "$BUILD" "$TOOLS" dist
 
 echo "== build venv =="
-python3 -m venv "$VENV"
+"$PY" -m venv "$VENV"
 "$VENV/bin/pip" install --quiet --upgrade pip
-"$VENV/bin/pip" install --quiet -e .
+"$VENV/bin/pip" install --quiet .
 "$VENV/bin/pip" install --quiet "pyinstaller>=6.10"
 
 echo "== staging vendor/pop-fe and precompiling pkgcrypt =="
 mkdir -p "$(dirname "$STAGE_VENDOR")"
 cp -r vendor/pop-fe "$STAGE_VENDOR"
+find "$STAGE_VENDOR" -name __pycache__ -type d -prune -exec rm -rf {} +
 rm -f "$STAGE_VENDOR"/PSL1GHT/tools/ps3py/pkgcrypt*.so
 "$VENV/bin/python" - "$STAGE_VENDOR/PSL1GHT/tools/ps3py" <<'PY'
 import subprocess
@@ -42,12 +53,14 @@ subprocess.run(cmd, cwd=ps3py, check=True)
 print("pkgcrypt.so built for", sys.executable)
 PY
 
-echo "== pyinstaller onefile =="
+echo "== pyinstaller onedir =="
 "$VENV/bin/pyinstaller" \
-    --onefile \
+    --noconfirm \
+    --onedir \
     --name psone2ps3pkg \
     --add-data "$STAGE_VENDOR:vendor/pop-fe" \
-    --collect-all textual \
+    --add-data "$REPO_ROOT/src/psone2ps3pkg/gui/icon.png:psone2ps3pkg/gui" \
+    --collect-all pygame \
     --collect-all PIL \
     --collect-all Crypto \
     --collect-all pycdlib \
@@ -57,11 +70,39 @@ echo "== pyinstaller onefile =="
     --collect-all certifi \
     --collect-all idna \
     --collect-all charset_normalizer \
-    --distpath dist \
+    --hidden-import psone2ps3pkg.gui.app \
+    --exclude-module tkinter \
+    --distpath "$BUILD/dist" \
     --workpath "$BUILD/work" \
     --specpath "$BUILD" \
     src/psone2ps3pkg/__main__.py
 
+echo "== AppDir =="
+mkdir -p "$APPDIR/usr/lib" "$APPDIR/usr/share/icons/hicolor/256x256/apps" "$APPDIR/usr/share/applications"
+cp -a "$BUILD/dist/psone2ps3pkg" "$APPDIR/usr/lib/psone2ps3pkg"
+cat > "$APPDIR/AppRun" <<'SH'
+#!/bin/sh
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "$HERE/usr/lib/psone2ps3pkg/psone2ps3pkg" "$@"
+SH
+chmod 755 "$APPDIR/AppRun"
+"$VENV/bin/python" -c "from psone2ps3pkg.desktop import desktop_entry; print(desktop_entry(), end='')" \
+    > "$APPDIR/psone2ps3pkg.desktop"
+cp "$APPDIR/psone2ps3pkg.desktop" "$APPDIR/usr/share/applications/"
+cp src/psone2ps3pkg/gui/icon.png "$APPDIR/psone2ps3pkg.png"
+cp src/psone2ps3pkg/gui/icon.png "$APPDIR/usr/share/icons/hicolor/256x256/apps/psone2ps3pkg.png"
+ln -sf psone2ps3pkg.png "$APPDIR/.DirIcon"
+
+echo "== appimagetool =="
+TOOL="$TOOLS/appimagetool-$ARCH.AppImage"
+if [ ! -x "$TOOL" ]; then
+    url="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$ARCH.AppImage"
+    if command -v curl >/dev/null; then curl -fsSL -o "$TOOL" "$url"; else wget -q -O "$TOOL" "$url"; fi
+    chmod +x "$TOOL"
+fi
+# Extract-and-run: works in containers / CI without FUSE.
+APPIMAGE_EXTRACT_AND_RUN=1 ARCH=$ARCH "$TOOL" --no-appstream "$APPDIR" "$OUT"
+
 echo
-echo "Built: dist/psone2ps3pkg"
-dist/psone2ps3pkg --version
+echo "Built: $OUT ($(du -h "$OUT" | cut -f1))"
+APPIMAGE_EXTRACT_AND_RUN=1 "$OUT" --version
