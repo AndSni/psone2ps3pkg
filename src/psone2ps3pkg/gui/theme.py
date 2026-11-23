@@ -437,12 +437,14 @@ def progress(surf: pygame.Surface, r: pygame.Rect, frac: float, t: float, busy: 
         k = x / max(1, inner.width)
         c = (int(60 + 60 * k), int(110 + 70 * k), 255)
         pygame.draw.line(surf, c, (inner.left + x, inner.top), (inner.left + x, inner.bottom - 1))
-    if busy:
-        seg = sc(60)
-        span = inner.width + seg
+    if busy and fw > 0:
+        # the moving light stays inside the blue (done) part of the bar
+        filled = pygame.Rect(inner.left, inner.top, fw, inner.height)
+        seg = min(sc(60), max(sc(12), fw // 2))
+        span = fw + seg
         x = int((t * 160 * K) % span) - seg
         clip = surf.get_clip()
-        surf.set_clip(inner)
+        surf.set_clip(filled)
         layer = pygame.Surface((seg, inner.height), pygame.SRCALPHA)
         for i in range(seg):
             a = int(120 * math.sin(math.pi * i / seg))
