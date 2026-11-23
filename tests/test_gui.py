@@ -138,3 +138,63 @@ def test_settings_persist(tmp_path: Path):
         assert b.options.output_dir == tmp_path
     finally:
         b.shutdown()
+
+
+def click(pos):
+    return [pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos),
+            pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=pos)]
+
+
+def hint_pos(app, kind):
+    for k, rect in app.hint_hits:
+        if k == kind:
+            return rect.center
+    raise AssertionError(f"no {kind} in hint bar: {app.hint_hits}")
+
+
+def test_hint_bar_select_and_back_are_clickable(app, tmp_path: Path):
+    write_cue_game(tmp_path, "Alpha", "SLUS_900.21")
+    pump(app, lambda: app.screen == "games",
+         events=[pygame.event.Event(pygame.DROPFILE, file=str(tmp_path))])
+    pump(app, lambda: True)
+    app.focus_key = "row0"
+    pump(app, lambda: True)
+    # SELECT toggles the focused game
+    pump(app, lambda: not app.selected_games(), events=click(hint_pos(app, "cross")))
+    # DETAILS opens the overlay, its OK in the bar closes it
+    pump(app, lambda: app.overlay is not None, events=click(hint_pos(app, "triangle")))
+    pump(app, lambda: True)
+    pump(app, lambda: app.overlay is None, events=click(hint_pos(app, "cross")))
+    # ALL / NONE, then BACK to the home screen
+    pump(app, lambda: len(app.selected_games()) == 1, events=click(hint_pos(app, "square")))
+    pump(app, lambda: True)
+    pump(app, lambda: app.screen == "home", events=click(hint_pos(app, "circle")))
+
+
+def test_option_arrows_click_in_their_direction(app, tmp_path: Path):
+    write_cue_game(tmp_path, "Alpha", "SLUS_900.22")
+    pump(app, lambda: app.screen == "games",
+         events=[pygame.event.Event(pygame.DROPFILE, file=str(tmp_path))])
+    pump(app, lambda: True)
+    row = next(it for it in app.items if it.key == "target").rect
+    app.options.target = Target.PS3
+    left = (row.left + gui_app.OPTION_VALUE_X + 4, row.centery)
+    right = (row.right - 14, row.centery)
+    pump(app, lambda: app.options.target is Target.PS2, events=click(left))   # back wraps
+    pump(app, lambda: app.options.target is Target.PS3, events=click(right))
+
+
+def test_pad_buttons(app, tmp_path: Path):
+    write_cue_game(tmp_path, "Alpha", "SLUS_900.23")
+    pump(app, lambda: app.screen == "games",
+         events=[pygame.event.Event(pygame.DROPFILE, file=str(tmp_path))])
+    pump(app, lambda: True)
+    app.focus_key = "row0"
+    app.on_pad_button(pygame.CONTROLLER_BUTTON_A)          # cross: toggle
+    assert not app.selected_games()
+    app.on_pad_button(pygame.CONTROLLER_BUTTON_X)          # square: all
+    assert app.selected_games()
+    app.on_pad_button(pygame.CONTROLLER_BUTTON_DPAD_DOWN)  # moves focus
+    assert app.focus_key != "row0"
+    app.on_pad_button(pygame.CONTROLLER_BUTTON_BACK)       # Select/Back key: back
+    assert app.screen == "home"

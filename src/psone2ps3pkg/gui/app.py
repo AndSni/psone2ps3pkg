@@ -25,6 +25,11 @@ os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
 import pygame  # noqa: E402
 
+try:  # SDL game-controller API: one button layout for all known pads
+    from pygame._sdl2 import controller as _controller  # noqa: E402
+except ImportError:  # pragma: no cover
+    _controller = None  # type: ignore[assignment]
+
 from psone2ps3pkg import __version__  # noqa: E402
 from psone2ps3pkg.convert import (  # noqa: E402
     Options,
@@ -40,6 +45,7 @@ from psone2ps3pkg.library import Game, Library, scan_paths  # noqa: E402
 
 ICON = Path(__file__).with_name("icon.png")
 TARGETS = [Target.PS3, Target.PSP, Target.PS2]
+OPTION_VALUE_X = 190  # x of an option row's left arrow, from the row's left edge
 TARGET_NOTES = {
     Target.PS3: "INSTALL ON PS3 (CFW / HEN) FROM PACKAGE MANAGER",
     Target.PSP: "COPY THE PSP FOLDER TO A PSP OR VITA (ADRENALINE)",
@@ -146,7 +152,13 @@ class App:
 
         self.pending_drops: list[Path] = []
         self.last_drop = 0.0
-        self.joysticks: list = []
+        self.joysticks: dict[int, object] = {}
+        self.controllers: dict[int, object] = {}
+        self.hint_hits: list[tuple[str, pygame.Rect]] = []
+        try:
+            _controller.init()
+        except (pygame.error, AttributeError):
+            pass
 
         s = settings.load()
         self.options = Options(
@@ -470,12 +482,26 @@ class App:
             return
         elif ev.type == pygame.KEYDOWN:
             self.on_key(ev.key)
-        elif ev.type == pygame.JOYDEVICEADDED:
+        elif ev.type == getattr(pygame, "CONTROLLERDEVICEADDED", -1):
             try:
-                self.joysticks.append(pygame.joystick.Joystick(ev.device_index))
+                c = _controller.Controller(ev.device_index)
+                self.controllers[c.as_joystick().get_instance_id()] = c
+            except (pygame.error, AttributeError):
+                pass
+        elif ev.type == getattr(pygame, "CONTROLLERBUTTONDOWN", -1):
+            self.on_pad_button(ev.button)
+        elif ev.type == pygame.JOYDEVICEADDED:
+            # Pads SDL does not know as game controllers: raw joystick events.
+            try:
+                if _controller and _controller.is_controller(ev.device_index):
+                    return
+                j = pygame.joystick.Joystick(ev.device_index)
+                self.joysticks[j.get_instance_id()] = j
             except pygame.error:
                 pass
         elif ev.type == pygame.JOYHATMOTION:
+            if getattr(ev, "instance_id", None) in self.controllers:
+                return
             x, y = ev.value
             if y == 1:
                 self.on_key(pygame.K_UP)
@@ -486,10 +512,12 @@ class App:
             elif x == 1:
                 self.on_key(pygame.K_RIGHT)
         elif ev.type == pygame.JOYBUTTONDOWN:
-            # Common pad layout: 0 bottom (cross), 1 right (circle), 2 left (square), 3 top (triangle).
-            mapping = {0: pygame.K_RETURN, 1: pygame.K_ESCAPE, 2: pygame.K_a, 3: pygame.K_i}
+            if getattr(ev, "instance_id", None) in self.controllers:
+                return  # handled as CONTROLLERBUTTONDOWN
+            # Unknown pad: guess the usual order (bottom, right, left, top).
+            mapping = {0: "cross", 1: "circle", 2: "square", 3: "triangle"}
             if ev.button in mapping:
-                self.on_key(mapping[ev.button])
+                self.press(mapping[ev.button])
         elif ev.type == pygame.MOUSEMOTION:
             for it in self.items:
                 if it.rect and it.rect.collidepoint(ev.pos):
@@ -499,6 +527,37 @@ class App:
             self.on_click(ev.pos)
         elif ev.type == pygame.MOUSEWHEEL:
             self.on_wheel(-ev.y)
+
+    def on_pad_button(self, button: int) -> None:
+        c = pygame
+        face = {
+            getattr(c, "CONTROLLER_BUTTON_A", -10): "cross",      # bottom face button
+            getattr(c, "CONTROLLER_BUTTON_B", -11): "circle",     # right
+            getattr(c, "CONTROLLER_BUTTON_X", -12): "square",     # left
+            getattr(c, "CONTROLLER_BUTTON_Y", -13): "triangle",   # top
+            getattr(c, "CONTROLLER_BUTTON_BACK", -14): "circle",  # Select / Back / Share
+            getattr(c, "CONTROLLER_BUTTON_START", -15): "cross",  # Start / Options
+        }
+        dpad = {
+            getattr(c, "CONTROLLER_BUTTON_DPAD_UP", -20): pygame.K_UP,
+            getattr(c, "CONTROLLER_BUTTON_DPAD_DOWN", -21): pygame.K_DOWN,
+            getattr(c, "CONTROLLER_BUTTON_DPAD_LEFT", -22): pygame.K_LEFT,
+            getattr(c, "CONTROLLER_BUTTON_DPAD_RIGHT", -23): pygame.K_RIGHT,
+        }
+        if button in face:
+            self.press(face[button])
+        elif button in dpad:
+            self.on_key(dpad[button])
+
+    def hints(self, s: pygame.Surface, items: list[tuple[str, str]]) -> None:
+        # The last bar drawn in a frame (an overlay's) is the one on screen.
+        self.hint_hits = th.hints(s, items)
+
+    def press(self, kind: str) -> None:
+        """A face button, from the hint bar or a pad."""
+        key = {"cross": pygame.K_RETURN, "circle": pygame.K_ESCAPE,
+               "triangle": pygame.K_i, "square": pygame.K_a}[kind]
+        self.on_key(key)
 
     def focus_index(self) -> int:
         for i, it in enumerate(self.items):
@@ -563,17 +622,23 @@ class App:
             self.on_wheel(-5)
 
     def on_click(self, pos) -> None:
+        for kind, rect in self.hint_hits:
+            if rect.collidepoint(pos):
+                self.press(kind)
+                return
         for it in self.items:
             if it.rect and it.rect.collidepoint(pos):
                 self.focus_key = it.key
                 if it.left and it.right:
-                    # option rows: left third goes back, the rest goes forward
-                    if pos[0] < it.rect.left + it.rect.width * 0.62:
-                        (it.activate or it.right)()
-                    elif pos[0] < it.rect.right - 40:
+                    # option rows: the left arrow steps back, the right arrow
+                    # steps forward, the rest of the row activates
+                    arrow_l = it.rect.left + OPTION_VALUE_X
+                    if arrow_l - 8 <= pos[0] <= arrow_l + 16:
                         it.left()
-                    else:
+                    elif pos[0] >= it.rect.right - 34:
                         it.right()
+                    else:
+                        (it.activate or it.right)()
                 elif it.activate:
                     it.activate()
                 return
@@ -667,7 +732,7 @@ class App:
             self.focus_key = "folder"
         th.text(s, f"OUTPUT: {self.options.target.label}  —  CHANGE IT AFTER THE SCAN", 15,
                 (th.W // 2, 404), th.FAINT, align="center")
-        th.hints(s, [("cross", "SELECT"), ("circle", "QUIT")])
+        self.hints(s, [("cross", "SELECT"), ("circle", "QUIT")])
 
     # scan ---------------------------------------------------------------
     def draw_scan(self, s: pygame.Surface) -> None:
@@ -675,7 +740,7 @@ class App:
         th.disc(s, (th.W // 2, 190), 70, self.t * 2.5)
         th.text(s, "READING DISCS…", 26, (th.W // 2, 290), align="center")
         th.text(s, self.scan_status, 16, (th.W // 2, 326), th.DIM, align="center", max_w=560)
-        th.hints(s, [])
+        self.hints(s, [])
 
     # games --------------------------------------------------------------
     def _list_rect(self) -> pygame.Rect:
@@ -734,9 +799,9 @@ class App:
         # skipped line
         if self.lib.skipped:
             r = th.text(s, f"{len(self.lib.skipped)} FILE{'S' if len(self.lib.skipped) != 1 else ''} SKIPPED — SHOW WHY",
-                        15, (24, 280), th.WARN if self.focused("skipped") else th.DIM, shadow=False)
+                        15, (24, 280), th.WARN if self.focused("skipped") else th.DIM)
             self.items.append(Item("skipped", r.inflate(8, 4), self.show_skipped))
-        th.text(s, TARGET_NOTES[self.options.target], 14, (th.W - 22, 281), th.FAINT, align="right", shadow=False)
+        th.text(s, TARGET_NOTES[self.options.target], 14, (th.W - 22, 281), th.DIM, align="right")
 
         # options
         op = pygame.Rect(20, 300, th.W - 40, 108)
@@ -761,7 +826,7 @@ class App:
                 s.blit(hl, r.topleft)
             th.text(s, label, 16, (r.left + 10, r.top + 6), th.DIM if enabled else th.FAINT, shadow=False)
             colour = th.TEXT if enabled else th.FAINT
-            vx = r.left + 190
+            vx = r.left + OPTION_VALUE_X
             if enabled:
                 arrow_c = th.ACCENT if self.focused(key) else th.FAINT
                 pygame.draw.polygon(s, arrow_c, [(vx, r.centery), (vx + 8, r.centery - 6), (vx + 8, r.centery + 6)])
@@ -780,7 +845,7 @@ class App:
         th.button(s, go, label, self.focused("start"), self.t, enabled=n_sel > 0, glyph="cross")
         self.items.append(Item("back", back, self.back))
         self.items.append(Item("start", go, self.start_convert))
-        th.hints(s, [("cross", "SELECT"), ("triangle", "DETAILS"), ("square", "ALL / NONE"), ("circle", "BACK")])
+        self.hints(s, [("cross", "SELECT"), ("triangle", "DETAILS"), ("square", "ALL / NONE"), ("circle", "BACK")])
 
     def _toggler(self, g: Game) -> Callable[[], None]:
         def f() -> None:
@@ -823,7 +888,7 @@ class App:
         b.midtop = (th.W // 2, 416)
         th.button(s, b, "CANCEL", self.focused("cancel"), self.t, enabled=not self.cancel.is_set(), glyph="circle")
         self.items.append(Item("cancel", b, self.cancel.set))
-        th.hints(s, [("circle", "CANCEL")])
+        self.hints(s, [("circle", "CANCEL")])
 
     # done ---------------------------------------------------------------
     def draw_done(self, s: pygame.Surface) -> None:
@@ -867,7 +932,7 @@ class App:
         if ok:
             self.items.append(Item("open", b2, self.open_output))
         self.items.append(Item("new", b3, self._new))
-        th.hints(s, [("cross", "SELECT"), ("circle", "BACK")])
+        self.hints(s, [("cross", "SELECT"), ("circle", "BACK")])
 
     def _new(self) -> None:
         self.lib = None
@@ -903,7 +968,7 @@ class App:
             self.items.append(Item(key, r, lambda i=i: b.choose(i), row=i))
         if not b.entries:
             th.text(s, "(EMPTY)", 17, (box.centerx, box.top + 20), th.FAINT, align="center")
-        th.hints(s, [("cross", "OPEN / USE"), ("circle", "CANCEL")])
+        self.hints(s, [("cross", "OPEN / USE"), ("circle", "CANCEL")])
 
     # overlay ------------------------------------------------------------
     def draw_overlay(self, s: pygame.Surface) -> None:
@@ -932,7 +997,7 @@ class App:
         th.button(s, b, "OK", True, self.t, glyph="cross")
         self.items.append(Item("ok", b, self.close_overlay))
         self.focus_key = "ok"
-        th.hints(s, [("cross", "OK")])
+        self.hints(s, [("cross", "OK")])
 
 
 def run(paths: list[str] | None = None) -> int:

@@ -75,36 +75,46 @@ def font(size: int, bold: bool = True) -> pygame.font.Font:
 # background
 # --------------------------------------------------------------------------- #
 class Background:
+    """Memory-card-screen style: a clean round lavender glow on dark navy that
+    slowly "breathes" on a sine. No dots, spheres or scanlines."""
+
+    CENTRE = (W // 2, int(H * 0.46))
+    EDGE = (6, 6, 30)
+    MID = (52, 52, 140)
+    CORE = (116, 116, 210)
+
     def __init__(self) -> None:
-        self.base = pygame.Surface((W, H))
-        for y in range(H):
-            t = y / (H - 1)
-            c = [int(BG_TOP[i] * (1 - t) + BG_BOT[i] * t) for i in range(3)]
-            pygame.draw.line(self.base, c, (0, y), (W, y))
-        self.scan = pygame.Surface((W, H), pygame.SRCALPHA)
-        for y in range(0, H, 3):
-            pygame.draw.line(self.scan, (0, 0, 0, 46), (0, y), (W, y))
-        self.ribbons = pygame.Surface((W, H), pygame.SRCALPHA)
+        self.base = self._radial(W, H, self.CENTRE, (self.CORE, self.MID, self.EDGE), 0.78)
+        # extra glow, blended on top with a pulsing alpha
+        self.glow = self._radial(W, H, self.CENTRE, ((44, 44, 100), (12, 12, 40), (0, 0, 0)), 0.42)
+
+    @staticmethod
+    def _radial(w, h, centre, stops, reach) -> pygame.Surface:
+        """Radial gradient through 3 colour stops, drawn small and smooth-scaled."""
+        k = 4
+        sw, sh = w // k, h // k
+        small = pygame.Surface((sw, sh))
+        cx, cy = centre[0] / k, centre[1] / k
+        rmax = math.hypot(max(cx, sw - cx), max(cy, sh - cy)) * reach
+        (c0, c1, c2) = stops
+        for y in range(sh):
+            for x in range(sw):
+                d = min(1.0, math.hypot(x - cx, (y - cy) * 1.15) / rmax)
+                # smooth fall-off: core -> mid by 45 %, mid -> edge after
+                if d < 0.45:
+                    u = (d / 0.45) ** 1.3
+                    c = [c0[i] + (c1[i] - c0[i]) * u for i in range(3)]
+                else:
+                    u = ((d - 0.45) / 0.55) ** 0.8
+                    c = [c1[i] + (c2[i] - c1[i]) * u for i in range(3)]
+                small.set_at((x, y), [int(v) for v in c])
+        return pygame.transform.smoothscale(small, (w, h))
 
     def draw(self, surf: pygame.Surface, t: float) -> None:
         surf.blit(self.base, (0, 0))
-        self.ribbons.fill((0, 0, 0, 0))
-        specs = (
-            (0.23, 300, 40, 0.0, (70, 110, 255, 34)),
-            (0.17, 330, 55, 1.7, (150, 90, 255, 26)),
-            (0.31, 270, 30, 3.1, (90, 200, 255, 22)),
-        )
-        for speed, base_y, amp, phase, colour in specs:
-            top, bot = [], []
-            for i in range(0, W + 33, 32):
-                x = i
-                y = base_y + amp * math.sin(i / 120 + t * speed * 2 + phase)
-                thick = 26 + 14 * math.sin(i / 90 - t * speed + phase)
-                top.append((x, y - thick))
-                bot.append((x, y + thick))
-            pygame.draw.polygon(self.ribbons, colour, top + bot[::-1])
-        surf.blit(self.ribbons, (0, 0))
-        surf.blit(self.scan, (0, 0))
+        g = self.glow.copy()
+        g.set_alpha(int(110 + 110 * math.sin(t * 0.9)))
+        surf.blit(g, (0, 0), special_flags=pygame.BLEND_RGB_ADD)
 
 
 # --------------------------------------------------------------------------- #
@@ -289,20 +299,24 @@ def shape(surf: pygame.Surface, kind: str, centre: tuple[int, int], r: int) -> N
     surf.blit(img, img.get_rect(center=centre))
 
 
-def hints(surf: pygame.Surface, items: list[tuple[str, str]]) -> None:
-    """Bottom bar: (shape, label) pairs, right-aligned."""
+def hints(surf: pygame.Surface, items: list[tuple[str, str]]) -> list[tuple[str, pygame.Rect]]:
+    """Bottom bar: (shape, label) pairs, right-aligned. Returns click areas."""
     bar = pygame.Rect(0, H - 26, W, 26)
     surf.fill((4, 5, 18), bar)  # opaque: an overlay's hints replace the screen's
     pygame.draw.line(surf, (60, 64, 100), bar.topleft, bar.topright)
     x = W - 18
+    hits: list[tuple[str, pygame.Rect]] = []
     for kind, label in reversed(items):
         img = render(label, 16, DIM)
+        right = x
         x -= img.get_width()
         surf.blit(img, (x, bar.top + 7))
         x -= 17
         pygame.draw.circle(surf, (78, 84, 124), (x, bar.centery), 11)  # rim: dark disc on dark bar
         shape(surf, kind, (x, bar.centery), 10)
+        hits.append((kind, pygame.Rect(x - 12, bar.top, right - x + 16, bar.height)))
         x -= 26
+    return hits
 
 
 def checkbox(surf: pygame.Surface, rect: pygame.Rect, checked: bool) -> None:
