@@ -65,6 +65,7 @@ class Item:
     left: Callable[[], None] | None = None
     right: Callable[[], None] | None = None
     row: int | None = None  # list index, for scrolling
+    click: Callable[[tuple[int, int]], None] | None = None  # mouse action, if not `activate`
 
 
 @dataclass
@@ -537,11 +538,9 @@ class App:
             if ev.button in mapping:
                 self.press(mapping[ev.button])
         elif ev.type == pygame.MOUSEMOTION:
+            # Hover only highlights; it never moves the selection, so the
+            # pointer can travel to DETAILS without changing the chosen game.
             self.mouse = th.to_layout(ev.pos)
-            for it in self.items:
-                if it.rect and it.rect.collidepoint(th.to_layout(ev.pos)):
-                    self.focus_key = it.key
-                    break
         elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
             self.on_click(th.to_layout(ev.pos))
         elif ev.type == pygame.MOUSEWHEEL:
@@ -651,6 +650,9 @@ class App:
         for it in self.items:
             if it.rect and it.rect.collidepoint(pos):
                 self.focus_key = it.key
+                if it.click:
+                    it.click(pos)
+                    return
                 if it.left and it.right:
                     # option rows: the left arrow steps back, the right arrow
                     # steps forward, the rest of the row activates
@@ -824,6 +826,8 @@ class App:
             if self.focused(key):
                 th.fill_alpha(s, row, (120, 170, 255, 46))
                 th.rect(s, th.ACCENT, row, 1)
+            elif row.collidepoint(self.mouse):
+                th.fill_alpha(s, row, (120, 170, 255, 18))
             cb = pygame.Rect(row.left + 10, row.centery - 9, 18, 18)
             th.checkbox(s, cb, self.checked.get(self.game_key(g), False))
             info = pygame.Rect(row.right - 34, row.centery - 11, 22, 22)
@@ -840,7 +844,10 @@ class App:
                 tag = "! NOTE"
             if tag:
                 th.text(s, tag, 14, (row.right - 44, row.top + 25), colour, align="right", shadow=False)
-            self.items.append(Item(key, row, self._toggler(g), row=i))
+            toggle = self._toggler(g)
+            hit = cb.inflate(14, 14)  # a little larger than the box
+            self.items.append(Item(key, row, toggle, row=i,
+                                   click=lambda pos, hit=hit, toggle=toggle: hit.collidepoint(pos) and toggle()))
             # the info circle sits on top of the row; check it first on click
             self.items.insert(len(self.items) - 1, Item(f"info{i}", info, lambda g=g: self.show_details(g)))
         if len(games) > vis:

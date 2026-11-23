@@ -48,7 +48,9 @@ without artwork.
 
 1. Drop disc images or a folder on the window, or click **CHOOSE FOLDER** /
    **CHOOSE FILES**.
-2. Check the games you want. **i** shows the serial, disc files and notes for a game.
+2. Click a game to select it; click its **checkbox** to include or skip it.
+   **△ DETAILS** (or the **i** button) shows the serial, disc files and notes of
+   the selected game.
 3. Pick the **output type**, the PS3 emulator, cover art and where to save.
 4. Press **CONVERT**.
 
@@ -130,7 +132,7 @@ A star on GitHub helps too, and bug reports go to the [issues](../../issues).
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 psone2ps3pkg                  # run the app from source
-pytest                        # 39 tests; the GUI ones run on SDL's dummy driver
+pytest                        # 41 tests; the GUI ones run on SDL's dummy driver
 ```
 
 From source you also need a C compiler and Python headers once, to build pop-fe's

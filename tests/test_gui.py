@@ -232,3 +232,34 @@ def test_support_line_intro_hover_and_click(app, monkeypatch):
     assert app.support_mix == 0.0                 # leaving hides it
     app.on_click(app.support_rect.center)         # hidden: no click-through
     assert len(opened) == 1
+
+
+def test_row_click_selects_checkbox_click_toggles(app, tmp_path: Path):
+    write_cue_game(tmp_path, "Alpha", "SLUS_900.31")
+    write_cue_game(tmp_path, "Beta", "SLUS_900.32")
+    write_cue_game(tmp_path, "Gamma", "SLUS_900.33")
+    pump(app, lambda: app.screen == "games",
+         events=[pygame.event.Event(pygame.DROPFILE, file=str(tmp_path))])
+    pump(app, lambda: True)
+    rows = {it.key: it.rect for it in app.items if it.key.startswith("row")}
+
+    # click the middle of the second row: it becomes the selected game, check mark unchanged
+    pump(app, lambda: app.focus_key == "row1", events=click(rows["row1"].center))
+    assert len(app.selected_games()) == 3
+
+    # the pointer passes over other rows on its way to the bottom bar
+    for y in (rows["row2"].centery, 300, 380):
+        pygame.event.post(pygame.event.Event(pygame.MOUSEMOTION, pos=(300, y), rel=(0, 0), buttons=(0, 0, 0)))
+    pump(app, lambda: True)
+    assert app.focus_key == "row1"
+
+    # DETAILS opens for the selected game (Beta)
+    pump(app, lambda: app.overlay is not None, events=click(hint_pos(app, "triangle")))
+    assert app.overlay.title == "Beta"
+    app.close_overlay()
+    pump(app, lambda: True)
+
+    # only the checkbox toggles the check mark
+    cb = (rows["row1"].left + 19, rows["row1"].centery)
+    pump(app, lambda: len(app.selected_games()) == 2, events=click(cb))
+    assert not app.checked[app.game_key(app.lib.games[1])]
