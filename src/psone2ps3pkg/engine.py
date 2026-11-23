@@ -79,7 +79,7 @@ def ensure_engine(log: Logger = lambda _s: None) -> Engine:
     _build_pkgcrypt(work / "PSL1GHT" / "tools" / "ps3py", log)
     shim_dir = _write_shim(runtime_dir() / "shim")
 
-    env = host_env()
+    env = child_env()
     env["PYTHONUNBUFFERED"] = "1"
     ps3py = str(work / "PSL1GHT" / "tools" / "ps3py")
     env["PYTHONPATH"] = os.pathsep.join(p for p in (ps3py, env.get("PYTHONPATH", "")) if p)
@@ -103,8 +103,23 @@ def _write_shim(shim_dir: Path) -> Path:
     shim_dir.mkdir(parents=True, exist_ok=True)
     invocation = " ".join(shlex.quote(part) for part in own_invocation())
     script = shim_dir / "python3"
-    script.write_text(f'#!/bin/sh\nexec {invocation} --internal-exec "$@"\n')
+    # PYINSTALLER_RESET_ENVIRONMENT: the shim is called from inside a frozen
+    # process; the new copy must set up its own bundled libraries.
+    script.write_text(
+        "#!/bin/sh\nPYINSTALLER_RESET_ENVIRONMENT=1\nexport PYINSTALLER_RESET_ENVIRONMENT\n"
+        f'exec {invocation} --internal-exec "$@"\n'
+    )
     script.chmod(0o755)
+
+    # pop-fe runs chdman from inside a frozen process whose LD_LIBRARY_PATH
+    # points at the bundle; the host's chdman must load host libraries.
+    chd = shim_dir / "chdman"
+    real = find_chdman()
+    if getattr(sys, "frozen", False) and real:
+        chd.write_text(f"#!/bin/sh\nunset LD_LIBRARY_PATH\nexec {shlex.quote(real)} \"$@\"\n")
+        chd.chmod(0o755)
+    else:
+        chd.unlink(missing_ok=True)
     return shim_dir
 
 
@@ -121,6 +136,18 @@ def host_env() -> dict[str, str]:
             env["LD_LIBRARY_PATH"] = orig
         else:
             env.pop("LD_LIBRARY_PATH", None)
+        # PyInstaller's own bookkeeping. If a new copy of this program
+        # inherits it, that copy skips its library setup (seen as
+        # "libffi.so.7: cannot open shared object file" on hosts without it).
+        for key in [k for k in env if k.startswith("_PYI_")]:
+            del env[key]
+    return env
+
+
+def child_env() -> dict[str, str]:
+    """Environment for starting a new copy of this program."""
+    env = host_env()
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     return env
 
 
@@ -169,8 +196,38 @@ def _build_pkgcrypt(ps3py: Path, log: Logger) -> None:
         raise EngineError("Failed to build pkgcrypt:\n" + (result.stderr or result.stdout))
 
 
+_PROBE = """\
+import sys
+from Crypto.Cipher import AES  # make_isoedat.py (ISO.BIN.EDAT)
+import ctypes, ecdsa, PIL.Image, pycdlib, requests
+sys.path.insert(0, "PSL1GHT/tools/ps3py")  # where pkg.py imports it from
+import pkgcrypt  # PKG signing
+print("engine imports ok")
+"""
+
+
+def probe(engine: Engine) -> tuple[bool, str]:
+    """Start pop-fe's runtime exactly as a conversion does and import its modules.
+
+    Catches bundle problems (missing libraries in child processes) that only
+    show halfway through a real conversion.
+    """
+    script = engine.dir / "_probe.py"
+    script.write_text(_PROBE)
+    try:
+        proc = subprocess.run(engine.invocation(str(script)), cwd=engine.dir, env=engine.env,
+                              capture_output=True, text=True, timeout=120)
+    finally:
+        script.unlink(missing_ok=True)
+    out = (proc.stdout + proc.stderr).strip()
+    return proc.returncode == 0 and "engine imports ok" in out, out
+
+
 def find_chdman() -> str | None:
-    return shutil.which("chdman")
+    """The host's chdman, never our own shim."""
+    shim = str(runtime_dir() / "shim")
+    path = os.pathsep.join(p for p in os.environ.get("PATH", "").split(os.pathsep) if p != shim)
+    return shutil.which("chdman", path=path)
 
 
 _GAMEDB: dict | None = None

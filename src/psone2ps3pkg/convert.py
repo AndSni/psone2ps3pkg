@@ -165,7 +165,9 @@ def _build(game: Game, options: Options, on_line: Logger, cancel: threading.Even
     try:
         inputs = [str(_stage_input(d.image, stage / str(i), on_line))
                   for i, d in enumerate(game.discs)]
-        args = ["--no-libcrypt"]
+        # --snd0 no: XMB background music needs ffmpeg + atracdenc (not
+        # bundled); without them pop-fe crashes on some titles (e.g. GT2).
+        args = ["--no-libcrypt", "--snd0", "no"]
         if not options.artwork:
             args.append("--force-no-assets")
 

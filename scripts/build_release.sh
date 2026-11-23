@@ -80,6 +80,12 @@ echo "== pyinstaller onedir =="
 echo "== AppDir =="
 mkdir -p "$APPDIR/usr/lib" "$APPDIR/usr/share/icons/hicolor/256x256/apps" "$APPDIR/usr/share/applications"
 cp -a "$BUILD/dist/psone2ps3pkg" "$APPDIR/usr/lib/psone2ps3pkg"
+# Base libraries every desktop has, in a newer version than the build box.
+# Bundled old copies shadow the host's and crash the host GL driver (Mesa /
+# LLVM need a newer libstdc++) as soon as the window opens.
+for lib in libstdc++.so.6 libgcc_s.so.1 libz.so.1; do
+    rm -f "$APPDIR/usr/lib/psone2ps3pkg/_internal/$lib"
+done
 cat > "$APPDIR/AppRun" <<'SH'
 #!/bin/sh
 HERE="$(dirname "$(readlink -f "$0")")"

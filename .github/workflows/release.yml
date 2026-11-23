@@ -20,14 +20,6 @@ jobs:
       - name: Build AppImage
         run: ./scripts/build_release.sh
 
-      - name: Smoke test
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-        run: |
-          app=$(ls dist/*.AppImage)
-          "$app" --version
-          "$app" --check
-
       - name: Stage assets
         run: |
           mkdir -p out
@@ -38,6 +30,38 @@ jobs:
         with:
           name: psone2ps3pkg-appimage
           path: out/*
+
+  verify:
+    # A newer distribution than the build box (no libffi.so.7, newer Mesa):
+    # catches bundled-library faults that the build container hides.
+    needs: appimage
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: psone2ps3pkg-appimage
+          path: out
+
+      - name: Engine check (pop-fe child process imports)
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          cd out && sha256sum -c SHA256SUMS
+          chmod +x *.AppImage
+          ./*.AppImage --version
+          ./*.AppImage --check
+
+      - name: Window opens (Xvfb)
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb xauth libgl1 libegl1
+          set +e
+          xvfb-run -a timeout 8 ./out/*.AppImage
+          rc=$?
+          echo "exit code $rc"
+          # 0 = closed cleanly on SIGTERM, 124 = still running at timeout
+          [ "$rc" = 0 ] || [ "$rc" = 124 ]
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')

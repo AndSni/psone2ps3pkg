@@ -117,3 +117,32 @@ def test_stage_and_noise_filters():
     assert _NOISE.match("atracdenc not found.")
     assert _NOISE.match("pip3 install rarfile")
     assert not _NOISE.match("Create ISO.BIN.EDAT")
+
+
+def test_build_passes_safe_popfe_flags(tmp_path: Path, monkeypatch):
+    import psone2ps3pkg.convert as conv
+
+    write_cue_game(tmp_path, "Game", "SLUS_900.08")
+    game = scan_paths([tmp_path]).games[0]
+    seen = []
+
+    class FakeEngine:
+        dir = tmp_path / "engine"
+        env: dict = {}
+
+        def invocation(self, script, *args):
+            return [script, *args]
+
+    def fake_run(cmd, engine, on_line, cancel, cleanup=lambda: None):
+        seen.append(cmd)
+        out = Path(cmd[cmd.index("--psp-dir") + 1]) / "SLUS90008"
+        out.mkdir(parents=True)
+        (out / "EBOOT.PBP").write_bytes(b"\x00PBP" + bytes(8))
+
+    monkeypatch.setattr(conv, "ensure_engine", lambda log: FakeEngine())
+    monkeypatch.setattr(conv, "_run", fake_run)
+    res = conv.build_game(game, Options(Target.PSP, output_dir=tmp_path / "out"))
+    assert res.ok, res.error
+    cmd = seen[0]
+    assert cmd[cmd.index("--snd0") + 1] == "no"
+    assert "--psp-use-cdda" in cmd and "--no-libcrypt" in cmd

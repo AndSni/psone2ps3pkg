@@ -128,12 +128,17 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _check() -> int:
-    from psone2ps3pkg.engine import ensure_engine, find_chdman
+    from psone2ps3pkg.engine import ensure_engine, find_chdman, probe
 
     ok = True
     try:
         engine = ensure_engine(print)
         print(f"engine ready:   {engine.dir}")
+        good, out = probe(engine)
+        print(f"engine imports: {'ok' if good else 'FAILED'}")
+        if not good:
+            print(out[-2000:])
+            ok = False
     except Exception as exc:  # noqa: BLE001 - report any setup failure verbatim
         print(f"engine FAILED:  {exc}")
         ok = False
