@@ -207,3 +207,28 @@ def test_window_scale_is_compact():
     assert th.pick_scale((3840, 2160)) == 1.75   # 1120x840
     assert th.pick_scale((1920, 1080)) == 1.0    # 640x480, never smaller
     assert th.pick_scale((1366, 768)) == 1.0
+
+
+def test_support_line_intro_hover_and_click(app, monkeypatch):
+    opened = []
+    monkeypatch.setattr(gui_app.picker, "open_folder", lambda target: opened.append(target) or True)
+
+    def run(seconds):
+        for _ in range(int(seconds * 60)):
+            app.tick(1 / 60, [])
+
+    run(1.0)
+    assert app.support_mix == 1.0                 # intro: support line shown
+    run(3.0)
+    assert app.support_mix == 0.0                 # then the version
+    ver = app.version_rect
+    app.mouse = ver.center
+    run(0.5)
+    assert app.support_mix == 1.0                 # hover reveals it again
+    app.on_click(app.support_rect.center)
+    assert opened == [gui_app.KOFI_URL]
+    app.mouse = (300, 300)
+    run(0.5)
+    assert app.support_mix == 0.0                 # leaving hides it
+    app.on_click(app.support_rect.center)         # hidden: no click-through
+    assert len(opened) == 1

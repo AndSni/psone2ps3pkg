@@ -55,7 +55,8 @@ def pick(tool: str, kind: str, start: Path) -> list[Path] | None:
     return out or None
 
 
-def open_folder(path: Path) -> bool:
+def open_folder(path: Path | str) -> bool:
+    """Open a folder or a URL with the desktop's default handler."""
     opener = shutil.which("xdg-open") or shutil.which("gio")
     if not opener:
         return False

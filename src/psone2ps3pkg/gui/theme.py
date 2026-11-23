@@ -200,6 +200,7 @@ def text(
     max_w: int | None = None,
     shadow: bool = True,
     left_ellipsis: bool = False,
+    alpha: int = 255,
 ) -> pygame.Rect:
     """Draw text; returns its rectangle in layout units."""
     if max_w:
@@ -215,9 +216,12 @@ def text(
         r.topleft = p
     if shadow:
         sh = render(s, size, (0, 0, 0)).copy()
-        sh.set_alpha(150)
+        sh.set_alpha(150 * alpha // 255)
         off = max(1, round(1.5 * K))
         surf.blit(sh, r.move(off, off))
+    if alpha < 255:
+        img = img.copy()
+        img.set_alpha(alpha)
     surf.blit(img, r)
     return pygame.Rect(int(r.left / K), int(r.top / K), math.ceil(r.width / K), math.ceil(r.height / K))
 
@@ -467,3 +471,23 @@ def disc(surf: pygame.Surface, centre, r: float, t: float) -> None:
     circle(surf, (150, 154, 170), (x, y), r * 0.38, 2)
     circle(surf, BG_BOT, (x, y), r * 0.13)
     circle(surf, (120, 124, 140), (x, y), r, 2)
+
+
+HEART = (255, 94, 122)
+
+
+def heart(surf: pygame.Surface, centre, size: float, colour=HEART, alpha: int = 255) -> None:
+    """A filled heart, `size` layout units wide, drawn at 4x and smooth-scaled."""
+    px = max(4, sc(size))
+    k = 4
+    big = pygame.Surface((px * k, px * k), pygame.SRCALPHA)
+    n = px * k
+    r = n * 0.27
+    col = (*colour, 255)
+    pygame.draw.circle(big, col, (round(n * 0.28), round(n * 0.33)), round(r))
+    pygame.draw.circle(big, col, (round(n * 0.72), round(n * 0.33)), round(r))
+    pygame.draw.polygon(big, col, [(n * 0.035, n * 0.42), (n * 0.965, n * 0.42), (n * 0.5, n * 0.95)])
+    img = pygame.transform.smoothscale(big, (px, px))
+    if alpha < 255:
+        img.set_alpha(alpha)
+    surf.blit(img, img.get_rect(center=pt(centre)))

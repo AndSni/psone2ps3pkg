@@ -45,6 +45,10 @@ from psone2ps3pkg.library import Game, Library, scan_paths  # noqa: E402
 
 ICON = Path(__file__).with_name("icon.png")
 TARGETS = [Target.PS3, Target.PSP, Target.PS2]
+KOFI_URL = "https://ko-fi.com/asnidev"
+SUPPORT_TEXT = "If you like this app, consider supporting me on "
+SUPPORT_LINK = "Ko-fi"
+SUPPORT_INTRO = 3.0  # seconds the support line shows at start
 OPTION_VALUE_X = 190  # x of an option row's left arrow, from the row's left edge
 TARGET_NOTES = {
     Target.PS3: "INSTALL ON PS3 (CFW / HEN) FROM PACKAGE MANAGER",
@@ -155,6 +159,12 @@ class App:
         self.joysticks: dict[int, object] = {}
         self.controllers: dict[int, object] = {}
         self.hint_hits: list[tuple[str, pygame.Rect]] = []
+        # version slot: support line at start and on hover, else the version
+        self.mouse: tuple[int, int] = (-1, -1)
+        self.support_mix = 1.0  # 1 = support line shown, 0 = version shown
+        self.support_rect: pygame.Rect | None = None  # clickable when shown
+        self.version_rect: pygame.Rect | None = None
+        self.hand_cursor = False
         try:
             _controller.init()
         except (pygame.error, AttributeError):
@@ -527,6 +537,7 @@ class App:
             if ev.button in mapping:
                 self.press(mapping[ev.button])
         elif ev.type == pygame.MOUSEMOTION:
+            self.mouse = th.to_layout(ev.pos)
             for it in self.items:
                 if it.rect and it.rect.collidepoint(th.to_layout(ev.pos)):
                     self.focus_key = it.key
@@ -630,6 +641,9 @@ class App:
             self.on_wheel(-5)
 
     def on_click(self, pos) -> None:
+        if self.support_rect and self.support_mix > 0.5 and self.support_rect.collidepoint(pos):
+            picker.open_folder(KOFI_URL)
+            return
         for kind, rect in self.hint_hits:
             if rect.collidepoint(pos):
                 self.press(kind)
@@ -697,8 +711,56 @@ class App:
         w2 = th.measure("2", 30)[0]
         th.text(s, "PS3PKG", 30, (26 + w + w2, 14), th.TEXT)
         th.text(s, title, 18, (th.W // 2 + 40, 20), th.DIM, align="center")
-        th.text(s, right or f"v{__version__}", 16, (th.W - 20, 22), th.FAINT, align="right")
+        if right:
+            th.text(s, right, 16, (th.W - 20, 22), th.FAINT, align="right")
+            self.support_rect = self.version_rect = None
+        else:
+            self.version_slot(s)
         th.line(s, (80, 86, 130), (20, 46), (th.W - 20, 46))
+
+    def version_slot(self, s: pygame.Surface) -> None:
+        """Version number; the Ko-fi line shows for the first seconds and on hover."""
+        x_right, y = th.W - 20, 22
+        size = 14
+        w_text = th.measure(SUPPORT_TEXT, size)[0]
+        w_link = th.measure(SUPPORT_LINK, size)[0]
+        heart_w = 16
+        left = x_right - w_link - w_text - heart_w - 6
+        support = pygame.Rect(left - 4, y - 4, x_right - left + 8, 24)
+        version = pygame.Rect(x_right - th.measure(f"v{__version__}", 16)[0] - 6, y - 4,
+                              th.measure(f"v{__version__}", 16)[0] + 10, 24)
+
+        # target: shown during the intro, then only while the pointer is on it
+        hover_zone = support if self.support_mix > 0.3 else version
+        hovered = hover_zone.collidepoint(self.mouse)
+        target = 1.0 if (self.t < SUPPORT_INTRO or hovered) else 0.0
+        step = 1 / 60 * 3.0  # ~0.33 s fade
+        if self.support_mix < target:
+            self.support_mix = min(target, self.support_mix + step)
+        elif self.support_mix > target:
+            self.support_mix = max(target, self.support_mix - step)
+
+        m = self.support_mix
+        if m > 0:
+            a = int(255 * m)
+            th.heart(s, (left + heart_w / 2 - 2, y + 7), 13, alpha=a)
+            th.text(s, SUPPORT_TEXT, size, (left + heart_w, y + 1), th.DIM, alpha=a, shadow=False)
+            lx = left + heart_w + w_text
+            th.text(s, SUPPORT_LINK, size, (lx, y + 1), th.ACCENT, alpha=a, shadow=False)
+            if m > 0.6:  # plain lines cannot fade; show the underline when mostly visible
+                th.line(s, th.ACCENT, (lx, y + 17), (lx + w_link, y + 17))
+        if m < 1:
+            th.text(s, f"v{__version__}", 16, (x_right, y), th.FAINT, align="right", alpha=int(255 * (1 - m)))
+        self.support_rect = support
+        self.version_rect = version
+
+        want_hand = m > 0.5 and support.collidepoint(self.mouse)
+        if want_hand != self.hand_cursor:
+            self.hand_cursor = want_hand
+            try:
+                pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND if want_hand else pygame.SYSTEM_CURSOR_ARROW)
+            except (pygame.error, AttributeError):
+                pass
 
     def focused(self, key: str) -> bool:
         return self.focus_key == key
